@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>Ozakboy.TradeKit.Shioaji</PackageId>
+    <AssemblyName>Ozakboy.TradeKit.Shioaji</AssemblyName>
+    <RootNamespace>Ozakboy.TradeKit.Shioaji</RootNamespace>
+
+    <Title>Ozakboy.TradeKit.Shioaji — 永豐金 Shioaji 本機 HTTP server 用戶端</Title>
+    <Description>永豐金 Shioaji 官方本機 HTTP server(shioaji server start)的 .NET 10 用戶端,建構在 Ozakboy.Http 的管線與 Ozakboy.Security 的遮罩器之上,不使用任何第三方社群套件。本版涵蓋台股當沖桌面系統的第一個里程碑:啟動與監督官方 server 行程、查詢帳號與商品、訂閱行情並讀取串流、下單與查委託。行程監督(ShioajiServerSupervisor)以環境變數把憑證直接餵給子行程,憑證不寫任何檔案、不進日誌,輸出逐行遮罩後才寫入日誌;外部已啟動的 server 以 Attach 模式接手而不干涉其行程,模式(模擬或正式)與設定不符時拒絕接手;行程非預期退出時以退避重啟,超過上限進入 Faulted。HTTP 用戶端不簽章、不限流(限流由本地預算負責),重試只對 GET,所有 POST(含下單、改價、改量、撤單、訂閱)絕不重試;下單的逾時與 5xx 在錯誤上標記「結果未知」,避免呼叫端誤判為沒下成功而重複下單。行情走官方聚合串流(GET /api/v1/stream/data,一條 SSE 連線帶全部事件):逐行解析 event 與 data,股票與期權的成交、五檔、報價、指數報價與委託回報各有型別,所有價格與數量一律以原始文字解析成 decimal(絕不經過 double),台北時間的 date 與 time 以固定 UTC+8 轉成 UTC;格式未知的心跳一律保留原文,事件名不認得的以 UnknownEvent 原樣送出;讀不懂的事件以失敗送出而不是靜默吞掉。斷線或閒置逾時以退避重連,重連後呼叫端注入的回呼可重放訂閱與委託回報訂閱;連線、斷線、重連以生命週期事件從同一個串流送出;佇列有界,滿了丟棄最舊的並計數。本地限流預算(行情查詢 10 秒 50 次、帳務 5 秒 25 次、委託 10 秒 250 次、訂閱上限 200)在請求到達券商之前先擋下,絕不讓請求打到券商的處置線。所有預期的失敗回傳 Result,錯誤碼一律 shioaji. 開頭並集中在 ShioajiErrorCodes。A .NET 10 client for the official local HTTP server of SinoPac's Shioaji (shioaji server start), built on the Ozakboy.Http pipeline and the Ozakboy.Security masker with no third-party community packages. This first milestone covers what a Taiwan stock day-trading desktop needs: starting and supervising the official server process, querying accounts and contracts, subscribing to market data and reading the stream, and placing and listing orders. The supervisor feeds credentials to the child process through environment variables only, so they never touch a file or a log, and every output line is masked before it is logged; an already-running server is attached to without managing its process, and refused when its simulation or production mode disagrees with the configuration; an unexpected exit is restarted with backoff until a limit puts the supervisor in Faulted. The HTTP client neither signs nor rate-limits (the local budget does that), retries GET only, and never retries a POST — orders, price and quantity changes, cancellations and subscriptions included; an order that times out or meets a 5xx is flagged with an unknown outcome so a caller does not mistake it for "not placed" and send it twice. Market data uses the official aggregate stream (GET /api/v1/stream/data, one SSE connection for every event): event and data lines are parsed one by one into typed ticks, order books, quotes, index quotes and order reports for stocks and futures/options, every price and quantity is parsed from its raw text into decimal and never through double, and the Taipei date and time are converted to UTC at a fixed UTC+8. A heartbeat of unknown format is kept verbatim, an event name that is not recognised surfaces as an UnknownEvent, and an event that cannot be read surfaces as a failure instead of being swallowed. A dropped connection or an idle timeout reconnects with backoff, a caller-injected callback replays subscriptions and the order-report subscription afterwards, connect, disconnect and reconnect arrive as lifecycle events on the same stream, and the queue is bounded, dropping the oldest and counting. A local rate budget (market queries 50 per 10 s, account queries 25 per 5 s, orders 250 per 10 s, at most 200 subscriptions) refuses before a request reaches the broker, so the broker's penalty line is never approached. Every expected failure is a Result whose code starts with shioaji. and lives in ShioajiErrorCodes.</Description>
+    <PackageTags>ozakboy;tradekit;shioaji;sinopac;taiwan;stock;futures;day-trading;http;sse;server-sent-events;market-data;tick;order-book;order;order-event;supervisor;process;rate-limit;budget;reconnect;result-type;decimal;dotnet;csharp</PackageTags>
+
+    <PackageProjectUrl>https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji</RepositoryUrl>
+    <PackageReleaseNotes>0.1.0 — First release. ShioajiServerSupervisor starts and supervises the official `shioaji server start --no-open` process (credentials only through child-process environment variables, never a file or a log; every output line masked; Attach mode for an already-running server; mode mismatch refused; backoff restarts up to a limit, then Faulted). ShioajiAuthClient, ShioajiContractClient, ShioajiQuoteClient and ShioajiOrderClient cover /api/v1/info, accounts, usage, stream status, subscribe_trade, contracts, market-data subscription, place_order, update_price, update_qty, cancel_order and trades. The pipeline neither signs nor rate-limits, retries GET only, and never retries a POST; an order that times out or meets a 5xx carries outcomeUnknown=true. ShioajiStreamReader reads the aggregate SSE stream into typed events (stock and futures/options tick, bid-ask and quote, index quote, order report, heartbeat, unknown, lifecycle) with idle detection, backoff reconnection, a post-reconnect replay callback, and a bounded queue that drops the oldest and counts. ShioajiRateBudget enforces market-query 50/10 s, account 25/5 s, order 250/10 s and at most 200 subscriptions locally. Prices and quantities are decimal parsed from raw JSON text, never double; Taipei date and time convert to UTC at a fixed +8. Not run against a real server: the heartbeat format, error-body shape and several response shapes are unmeasured and handled defensively. Not in this release: portfolio, historical data, combo orders, earmarking, watchlist, regulatory lists, and the neutral TradeKit.Abstractions mapping. Full notes: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/blob/main/CHANGELOG.md</PackageReleaseNotes>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    這個命名空間幾乎每個檔案都用到(Result/Error),集中宣告成隱含 using,
+    避免每個檔案開頭重複一行,也避免 XML 註解裡的 cref 反過來讓 IDE0005 判成未使用的 using。
+    The namespace is used by almost every file, so it is declared once as an implicit using.
+  -->
+  <ItemGroup>
+    <Using Include="Ozakboy.Core.Abstractions" />
+  </ItemGroup>
+
+  <!-- 內部解析輔助型別需要直接測試,它們不屬於公開契約。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ozakboy.TradeKit.Shioaji.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\logo.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!--
+    相依政策:只允許 .NET BCL、Microsoft 官方套件與 Ozakboy.* 自研套件,判定看「遞移相依」而非套件名稱。
+    Ozakboy.TradeKit.Abstractions 0.8.0 本版只引用、不實作其介面(M1 再做中立介面的對映);
+    引用它是為了讓 M1 升級時相依圖已經就位,而且它只帶 Ozakboy.Core.Abstractions。
+    Ozakboy.Core.Abstractions 與 Ozakboy.Security 明確指定,不靠遞移帶進來:兩者的型別(Result、SecretMasker)
+    都在本套件的公開契約上,上游哪天不再帶它,斷的會是本套件的編譯。
+    Dependency policy: only the .NET BCL, first-party Microsoft packages, and Ozakboy.* packages, judged by the
+    transitive graph. Ozakboy.TradeKit.Abstractions 0.8.0 is referenced but its interfaces are not implemented in
+    this release (the neutral mapping is M1); referencing it now means the dependency graph is already in place at
+    that upgrade, and it brings in nothing but Ozakboy.Core.Abstractions. Ozakboy.Core.Abstractions and
+    Ozakboy.Security are pinned directly because their types (Result, SecretMasker) are on this package's public
+    contract.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Ozakboy.TradeKit.Abstractions" Version="0.8.0" />
+    <PackageReference Include="Ozakboy.Http" Version="0.3.4" />
+    <PackageReference Include="Ozakboy.Core.Abstractions" Version="0.3.0" />
+    <PackageReference Include="Ozakboy.Security" Version="0.1.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+  </ItemGroup>
+
+  <!--
+    刻意不引用 Microsoft.SourceLink.GitHub 套件,與其他 Ozakboy.* 套件一致(理由見 Binance 套件的 csproj)。
+    SourceLink is deliberately not referenced as a package, in line with the other Ozakboy.* packages.
+  -->
+
+</Project>

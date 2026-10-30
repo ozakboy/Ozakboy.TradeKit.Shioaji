@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ShioajiServerSupervisor 測試用的「假的 shioaji 可執行檔」。它不是測試專案(名稱不以 .Tests 結尾),
+    所以 Directory.Build.props 會對它套用套件等級的嚴格分析;這裡改回測試程式碼該有的寬鬆程度。
+    A fake shioaji executable for the ShioajiServerSupervisor tests. It is not a test project (its name does not
+    end in .Tests), so Directory.Build.props would apply the package-level strict analysis to it; this restores the
+    leniency test code deserves.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

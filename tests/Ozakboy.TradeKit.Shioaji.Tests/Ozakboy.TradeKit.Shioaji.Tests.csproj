@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+
+    <!--
+      改用 MSTest 內建的 Microsoft.Testing.Platform 執行器,不走舊的 VSTest —— 理由見 Binance 套件的測試專案:
+      VSTest 那條路徑會遞移帶進第三方的 Newtonsoft.Json。搭配 repo 根目錄的 global.json(test.runner)。
+      Uses MSTest's built-in Microsoft.Testing.Platform runner rather than the legacy VSTest path, which would
+      transitively drag in the third-party Newtonsoft.Json. Paired with the repo-level global.json.
+    -->
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest.TestAdapter" Version="4.0.2" />
+    <PackageReference Include="MSTest.TestFramework" Version="4.0.2" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="2.0.2" />
+    <!-- Microsoft 官方的假時鐘,只用於測試專案,不進套件的相依圖。 -->
+    <!-- Microsoft's fake clock, test project only; it does not enter the package's dependency graph. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ozakboy.TradeKit.Shioaji\Ozakboy.TradeKit.Shioaji.csproj" />
+    <!-- 假的 shioaji 可執行檔:只要先建出來,不引用它的組件。 -->
+    <!-- The fake shioaji executable: it only has to be built first; its assembly is not referenced. -->
+    <ProjectReference Include="..\FakeShioajiServerExe\FakeShioajiServerExe.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- 合約測試的 fixture。內容與取得方式見 Fixtures\PROVENANCE.md。 -->
+  <ItemGroup>
+    <None Update="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <Using Include="Ozakboy.Core.Abstractions" />
+    <Using Include="Ozakboy.TradeKit.Shioaji" />
+  </ItemGroup>
+
+</Project>

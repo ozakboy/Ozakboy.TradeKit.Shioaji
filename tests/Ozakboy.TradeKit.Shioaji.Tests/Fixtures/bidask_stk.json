@@ -1,0 +1,1 @@
+{"code":"2330","exchange":"TSE","date":"2026-10-30","time":"09:00:01.500000","datetime":"2026-10-30T09:00:01.500000","bid_price":[1001.5,1001,1000.5,1000,999.5],"bid_volume":[10,20,30,40,50],"diff_bid_vol":[1,0,-2,0,3],"ask_price":[1002,1002.5,1003,1003.5,1004],"ask_volume":[5,15,25,35,45],"diff_ask_vol":[0,0,0,-1,2],"suspend":false,"simtrade":false,"intraday_odd":false}

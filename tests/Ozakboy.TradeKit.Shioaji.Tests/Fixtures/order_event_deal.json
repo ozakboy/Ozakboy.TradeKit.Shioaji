@@ -1,0 +1,1 @@
+{"event_id":"evt-0002","trade_id":"a1b2c3d4","seqno":"000001","ordno":"A0001","exchange_seq":"X000123","broker_id":"9A95","account_id":"1234567","action":"Buy","code":"2330","order_cond":"Cash","order_lot":"Common","price":600.5,"quantity":1,"web_id":"137","custom_field":"sig001","ts":1761800401.5}

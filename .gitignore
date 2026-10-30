@@ -1,0 +1,43 @@
+# ── 建置產物 ──
+**/bin/
+**/obj/
+/artifacts/
+*.user
+*.suo
+
+# ── IDE ──
+.vs/
+.idea/
+*.DotSettings.user
+
+# ── 測試與涵蓋率 ──
+/TestResults/
+**/TestResults/
+*.coverage
+coverage*.json
+coverage*.xml
+*.trx
+
+# ── 套件輸出 ──
+*.nupkg
+*.snupkg
+
+# ── 作業系統 ──
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── 機密(絕不進版控)──
+.claude/secrets.local.json
+**/secrets.local.json
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+
+# 相依套件尚未發佈、暫時以本機 feed 還原時,NuGet.config 會把還原目的地指到這裡;留著忽略規則,免得殘留目錄進版控。
+# When a dependency is not yet published and a temporary NuGet.config restores from the local feed, it points the
+# restore target here; the rule stays so a leftover folder never lands in version control.
+/.nuget-packages/
