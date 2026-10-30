@@ -14,8 +14,9 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 這個家族的政策是只用 .NET BCL、Microsoft 官方套件與 `Ozakboy.*`,判定看**遞移相依**而不是套件名稱;
 這裡的每一個相依都符合,見最後的「相依政策」。
 
-> **0.1.0 是 M0:讓桌面系統能啟動 server、看到行情、下一筆模擬單並收到回報。**
-> 它**從未連過真的 `shioaji server`**(寫這一版時沒有憑證),所有測試都對著本機假伺服器跑。
+> **0.1.x 是 M0:讓桌面系統能啟動 server、看到行情、下一筆模擬單並收到回報。**
+> 它**從未用有效憑證連上真的 `shioaji server`**:0.1.1 只有拿假憑證對真的 `shioaji server start` 跑過一次(量到啟動與登入失敗的行為,
+> 見「2026-10-30 對真 server 的實測事實」),其餘所有測試都對著本機假伺服器跑。
 > 哪些行為是照文件推定、哪些完全沒量過,全部列在「限制與未實測事項」。**上實盤之前請先讀那一段。**
 
 ## 這一版做了什麼
@@ -306,12 +307,42 @@ if (placed.IsFailure)
 - **重啟:**就緒之後行程非預期退出,指數退避重啟(`RestartBackoff`,上限 60 秒);連續超過 `MaxRestarts`(預設 5)
   進入 `Faulted` 並放棄 —— 需要人工介入。行程穩定跑過 `StableAfter` 之後再退出,連續計數歸零。
 - **停止:**先 `shioaji server stop`(等 `StopTimeout`,預設 10 秒),沒停就終止整棵行程樹。
-- `ShioajiServerStatus` 快照:`State`、`ProcessId`、`StartedAt`、`Restarts`、`LastExitCode`、`LastError`。
+- **輸出剝色碼:**真的 `shioaji` 輸出帶 ANSI 色碼。stdout / stderr 逐行先剝掉 ANSI escape sequence,再遮罩,
+  才寫日誌;「最後 20 行」的錯誤資料用的也是剝過的版本。
+- **認證失敗是專用錯誤:**行程在就緒前退出,且輸出含 `Authentication failed`(不分大小寫),或 `login validation error`、
+  `invalid secret_key`、`invalid api_key` → `shioaji.server.auth_failed`,`Error.Data["detail"]` 帶那一行(已剝色碼、已遮罩)。
+  同一組憑證重試只會得到同一個答案,所以**直接進入 `Faulted`,不進重啟迴圈**;重啟過程中遇到認證失敗同樣直接 `Faulted`。
+- **`secret_key` 必須是 base58:**`ShioajiCredentials.Validate()`(supervisor 在啟動行程之前會呼叫)檢查 `SecretKey` 只含 base58 字元,
+  含 `0`、`O`、`I`、`l`、`_`、`-` 等字元就回 `shioaji.server.invalid_credentials`,**不啟動行程**,訊息只說「格式不符(base58)」,
+  不回顯任何字元。`ApiKey` 的格式未知,不檢查。
+- **日誌檔位置:**啟動時 stdout 的 `server log: <路徑>` 那一行會解析進 `ShioajiServerStatus.LogFilePath`,讓宿主把路徑顯示給使用者;
+  解析不到就是 `null`。
+- `ShioajiServerStatus` 快照:`State`、`ProcessId`、`StartedAt`、`Restarts`、`LastExitCode`、`LastError`、`LogFilePath`。
+
+## 2026-10-30 對真 server(無有效憑證)的實測事實
+
+用假憑證對真的 `shioaji.exe server start --no-open` 跑了一次(`SJ_HTTP_ADDR=127.0.0.1:18080`,`SJ_HOME_PATH` 指到暫存目錄)。
+**沒有成功登入過**,所以只有啟動與登入失敗這一段是實測,其餘仍是文件推定。
+
+- **server 是前景行程,不脫離。**登入失敗時行程直接退出,stdout 最後一行是
+  `Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): provided string contained invalid character '_' at byte 5`。
+  所以「行程以 0 結束但 server 仍在回應 → Attached」那條路徑實務上不會發生,程式裡保留只是防禦。
+- **輸出帶 ANSI 色碼**,例如 `ESC[2m2026-10-30T08:33:02.060484ZESC[0m ESC[32m INFO ESC[0m …`。
+- **啟動時 stdout 第一行是 `server log: <SJ_HOME_PATH>\logs\server-<port>\server.<UTC 日期>.log`。**
+- **`secret_key` 必須是 base58**;含 `_` 之類的字元,server 直接登入失敗退出。
+- **`shioaji server status` 的輸出是 toon 格式**,server 沒在跑時是四行:
+  ```
+  running: false
+  pid: null
+  port: 18080
+  healthy: false
+  ```
+  本套件**沒有**解析這個輸出(健康判斷走 `GET /api/v1/info`),這裡只是記下格式。
 
 ## 限制與未實測事項
 
-**這一版沒有對真的 `shioaji server` 跑過任何東西。**下面每一項都是「文件沒寫、或寫了但我沒量過」,
-套件的處理方式是防禦性的 —— 但防禦性不等於正確,第一次連真 server(M0 實測)時請對照日誌逐項確認:
+**這個套件還沒有用有效憑證對真的 `shioaji server` 跑過任何東西**(只有上一節的啟動與登入失敗)。下面每一項都是「文件沒寫、或寫了但我沒量過」,
+套件的處理方式是防禦性的 —— 但防禦性不等於正確,第一次成功登入真 server(M0 實測)時請對照日誌逐項確認:
 
 - **心跳的格式與頻率。**文件沒寫。套件把事件名 `heartbeat` / `ping`、空白事件名、非 JSON 物件的未知事件都當心跳並保留原文,
   SSE 註解行也算「活著」。第一個心跳的原文與第一個註解行會寫進日誌。
@@ -328,8 +359,8 @@ if (placed.IsFailure)
 - **欄位名。**`tick_stk` 的 `closing_oddlot_*` / `fixed_trade_*`、`quote_stk` 的 `avail_borrowing`、各種 `*_fop` 的細節欄位、
   `quote_idx` 的欄位,文件只寫了萬用字元或根本沒寫;名稱取自 Python SDK,**未在 HTTP 上驗證**。對不上時那個欄位是 `null`,
   不會讓事件失敗(只有代碼、時間、價格與五檔是必要的)。
-- **`shioaji server start` 是在前景執行還是自行脫離。**不明。套件兩種都處理:行程以結束碼 0 結束但 server 仍在回應,
-  視為 Attached(server 自己脫離了),停止時會呼叫 `shioaji server stop`。**這條路只用腳本化的探測測過,沒有真行程。**
+- **`shioaji server start` 是在前景執行還是自行脫離。**2026-10-30 實測:**前景、不脫離**(見上一節)。程式裡仍保留「行程以結束碼 0
+  結束但 server 仍在回應 → Attached,停止時呼叫 `shioaji server stop`」那條防禦路徑,它只用腳本化的探測測過。
 - **`server stop` 的行為、`--port` 參數、SSE 連線是否計入 5 條登入連線、HTTP / SSE 實際延遲。**都沒量過。
 - **`SJ_AGENT_HARNESS`**(語意未知)只提供透傳,走 `ShioajiServerOptions.AdditionalEnvironment`。
 - **Windows 以外的平台。**測試只在 Windows 跑過。`ShioajiServerSupervisor` 的行程管理與 `HttpListener` 假伺服器理論上跨平台,

@@ -15,10 +15,12 @@ It is built on the [`Ozakboy.Http`](https://github.com/ozakboy/Ozakboy.Http) pip
 only the .NET BCL, first-party Microsoft packages and `Ozakboy.*`, judged by the **transitive** graph rather than by
 package name; every dependency here complies, see "Dependency policy" at the end.
 
-> **0.1.0 is M0: let a desktop application start the server, see market data, place one simulated order and receive
-> its report.** It has **never been run against a real `shioaji server`** (there were no credentials while it was
-> written); every test runs against a local fake server. Which behaviours follow the documentation and which were
-> never measured is listed in "Limits and unmeasured behaviour". **Read that section before going live.**
+> **0.1.x is M0: let a desktop application start the server, see market data, place one simulated order and receive
+> its report.** It has **never been run against a real `shioaji server` with valid credentials**: 0.1.1 was only
+> adjusted after one run of the real `shioaji server start` with fake credentials (which measured start-up and
+> login-failure behaviour; see "Facts measured on 2026-10-30"), and every other test runs against a local fake
+> server. Which behaviours follow the documentation and which were never measured is listed in "Limits and
+> unmeasured behaviour". **Read that section before going live.**
 
 ## What this release does
 
@@ -339,13 +341,52 @@ strategy a broken book. A missing required field (code, time, price, book arrays
   60 s); more than `MaxRestarts` (5 by default) consecutive restarts put it in `Faulted` and it gives up, which needs
   a human. A process that ran for `StableAfter` before exiting starts the consecutive count over.
 - **Stop:** `shioaji server stop` first (waiting `StopTimeout`, 10 s by default), then the whole process tree is killed.
-- The `ShioajiServerStatus` snapshot: `State`, `ProcessId`, `StartedAt`, `Restarts`, `LastExitCode`, `LastError`.
+- **Colour codes are stripped from the output.** The real `shioaji` writes ANSI colour codes. Each stdout / stderr line
+  has its ANSI escape sequences stripped first and is masked after, and only then logged; the "last 20 lines" in
+  error data use the stripped text too.
+- **A failed login is a dedicated error.** The process exits before readiness and its output contains
+  `Authentication failed` (case-insensitive), or `login validation error`, `invalid secret_key` or
+  `invalid api_key` → `shioaji.server.auth_failed`, with that line (stripped and masked) in `Error.Data["detail"]`.
+  Retrying the same credentials earns the same answer, so it goes **straight to `Faulted` and never enters the restart
+  loop**; an authentication failure during a restart goes to `Faulted` too.
+- **`secret_key` must be base58.** `ShioajiCredentials.Validate()` (which the supervisor calls before starting any
+  process) checks that `SecretKey` has only base58 characters; one with `0`, `O`, `I`, `l`, `_`, `-` and the like gives
+  `shioaji.server.invalid_credentials` and **no process is started**. The message says only that the format does not
+  match (base58) and echoes no character. The format of `ApiKey` is unknown and it is not checked.
+- **Log file location.** The `server log: <path>` line printed on stdout at start is parsed into
+  `ShioajiServerStatus.LogFilePath`, so a host can show the path to the user; `null` when it cannot be parsed.
+- The `ShioajiServerStatus` snapshot: `State`, `ProcessId`, `StartedAt`, `Restarts`, `LastExitCode`, `LastError`,
+  `LogFilePath`.
+
+## Facts measured on 2026-10-30 against the real server (no valid credentials)
+
+One run of the real `shioaji.exe server start --no-open` with fake credentials (`SJ_HTTP_ADDR=127.0.0.1:18080`,
+`SJ_HOME_PATH` pointing at a temporary directory). **No login ever succeeded**, so only start-up and login failure
+are measured; the rest is still inferred from the documentation.
+
+- **The server is a foreground process and does not detach.** On a failed login the process simply exits, and the last
+  stdout line is
+  `Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): provided string contained invalid character '_' at byte 5`.
+  So the "exits 0 while the server still answers → Attached" path does not happen in practice; it stays in the code
+  only as a defence.
+- **The output carries ANSI colour codes**, for example `ESC[2m2026-10-30T08:33:02.060484ZESC[0m ESC[32m INFO ESC[0m …`.
+- **The first stdout line at start is `server log: <SJ_HOME_PATH>\logs\server-<port>\server.<UTC date>.log`.**
+- **`secret_key` must be base58**; a value with a character such as `_` makes the server fail the login and exit.
+- **The output of `shioaji server status` is in toon format**; with no server running it is four lines:
+  ```
+  running: false
+  pid: null
+  port: 18080
+  healthy: false
+  ```
+  This package does **not** parse it (health is judged with `GET /api/v1/info`); the format is recorded here only.
 
 ## Limits and unmeasured behaviour
 
-**Nothing in this release has been run against a real `shioaji server`.** Each item below is either unwritten in the
-documentation or written but never measured by me. The package handles them defensively, which is not the same as
-correctly; on the first run against a real server (the M0 measurement), check each against the log:
+**Nothing here has yet been run against a real `shioaji server` with valid credentials** (only the start-up and
+login-failure run above). Each item below is either unwritten in the documentation or written but never measured by
+me. The package handles them defensively, which is not the same as correctly; on the first successful login against a
+real server (the M0 measurement), check each against the log:
 
 - **The heartbeat format and cadence.** Undocumented. The package treats event names `heartbeat` / `ping`, a blank
   name, and unknown non-JSON-object events as heartbeats and keeps their text; SSE comment lines also count as
@@ -368,9 +409,10 @@ correctly; on the first run against a real server (the M0 measurement), check ea
   fields of the `*_fop` events and the fields of `quote_idx` are written in the documentation as wildcards or not at
   all; the names come from the Python SDK and are **unverified over HTTP**. A mismatch leaves that field `null` and
   does not fail the event (only code, time, price and the books are required).
-- **Whether `shioaji server start` stays in the foreground or detaches.** Unknown. Both are handled: a process that
-  exits 0 while the server still answers counts as Attached (the server detached itself), and a stop then calls
-  `shioaji server stop`. **That path was exercised only with a scripted probe, not a real process.**
+- **Whether `shioaji server start` stays in the foreground or detaches.** Measured on 2026-10-30: **foreground, no
+  detaching** (see above). The defensive path, a process that exits 0 while the server still answers counting as
+  Attached and a stop then calling `shioaji server stop`, remains in the code and was exercised only with a scripted
+  probe.
 - **The behaviour of `server stop`, the `--port` parameter, whether an SSE connection counts toward the 5 login
   connections, and the real HTTP / SSE latency.** None measured.
 - **`SJ_AGENT_HARNESS`** has unknown semantics and is only passed through, via

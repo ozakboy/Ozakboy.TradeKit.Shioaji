@@ -8,6 +8,69 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-30
+
+**依對真的 `shioaji server start --no-open` 的第一次實測(假憑證)調整:剝 ANSI 色碼、認證失敗專用錯誤碼、日誌檔路徑、本地檢查 `secret_key` 的 base58 格式。**
+**Adjusted to the first measurement of the real `shioaji server start --no-open` (fake credentials): stripping ANSI colour
+codes, a dedicated authentication-failure error, the log file path, and a local base58 check of `secret_key`.**
+
+實測方式:用假憑證對真的 `shioaji.exe` 跑一次(`SJ_HTTP_ADDR=127.0.0.1:18080`、`SJ_HOME_PATH` 指到暫存目錄)。沒有成功登入過,
+所以只有啟動與登入失敗的行為是實測,其餘仍是文件推定。
+Method: one run of the real `shioaji.exe` with fake credentials. No login succeeded, so only start-up and login-failure
+behaviour is measured; the rest is still inferred from the documentation.
+
+### 新增功能 / Added
+
+- **`shioaji.server.auth_failed`**(`ShioajiErrorCodes.ServerAuthFailed`):行程在就緒前退出,且最後 20 行輸出含 `Authentication failed`
+  (不分大小寫),或 `login validation error` / `invalid secret_key` / `invalid api_key` 時回傳。`Error.Data["detail"]`
+  (`ShioajiErrorDataKeys.Detail`)帶那一行,已剝色碼、已遮罩,另有 `exitCode`。分類 `Unauthorized`,非暫時性。
+  Returned when the process exits before readiness and its last 20 output lines contain `Authentication failed`
+  (case-insensitive), `login validation error`, `invalid secret_key` or `invalid api_key`. `Error.Data["detail"]` carries that
+  line, stripped and masked, plus `exitCode`. Category `Unauthorized`, not transient.
+- **`shioaji.server.invalid_credentials`**(`ShioajiErrorCodes.ServerInvalidCredentials`)與 **`ShioajiCredentials.Validate()`**:
+  `SecretKey` 含 base58 以外的字元(`0`、`O`、`I`、`l`、`_`、`-` 等,或空白)時,supervisor 在啟動行程之前就回傳這個錯誤,
+  訊息只說「格式不符(base58)」,不回顯任何字元。`ApiKey` 的格式未知,不檢查。
+  A `SecretKey` with a character outside base58 (`0`, `O`, `I`, `l`, `_`, `-` and the like, or blank) is refused by the
+  supervisor before any process starts; the message only says the format does not match (base58) and echoes no character.
+  The format of `ApiKey` is unknown and it is not checked.
+- **`ShioajiServerStatus.LogFilePath`**(`string?`):解析子行程 stdout 的 `server log: <路徑>` 那一行;解析不到、接手別人啟動的 server、
+  或還沒啟動過行程時為 `null`。
+  Parsed from the child's `server log: <path>` stdout line; `null` when it cannot be parsed, for an attached server, or
+  before any process was started.
+
+### 功能優化 / Changed
+
+- **supervisor 逐行剝除 ANSI escape sequence**(`ESC [ … 字母`)之後才遮罩並寫入日誌;錯誤資料裡的「最後 20 行」也是剝過的版本。
+  The supervisor strips ANSI escape sequences from every output line before masking and logging it; the "last 20 lines" in error
+  data are the stripped text too.
+- **認證失敗直接進入 `Faulted`,不進退避重啟迴圈**;重啟過程中遇到認證失敗或憑證格式不符同樣直接 `Faulted` 並停止重啟。
+  An authentication failure goes straight to `Faulted` without entering the backoff restart loop; one met during a restart, or a
+  malformed credential, also ends the loop in `Faulted`.
+- **行為變更:**格式不符的 `SecretKey` 以前會啟動一個行程、再因登入失敗退出,現在在本地就回 `shioaji.server.invalid_credentials`;
+  `ShioajiServerStatus` 多了必填屬性 `LogFilePath`(以物件初始化器建構它的程式碼需要補上)。
+  Behaviour change: a malformed `SecretKey` used to start a process that then failed to log in and is now refused locally;
+  `ShioajiServerStatus` gains the required property `LogFilePath` (code that builds it with an object initializer must set it).
+
+### 實測事實 / Measured facts
+
+- `shioaji server start --no-open` 是**前景行程,不脫離**;登入失敗時直接退出,stdout 最後一行是
+  `Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): …`。因此「行程以 0 結束但 server 仍在回應 → Attached」
+  那條路徑實務上不會發生,保留只是防禦。
+  `shioaji server start --no-open` is a **foreground process that does not detach**; on a failed login it exits at once with
+  `Error: Authentication failed: …` as the last stdout line. The "exits 0 while still answering → Attached" path therefore does
+  not happen in practice and stays only as a defence.
+- 輸出帶 ANSI 色碼;啟動時 stdout 第一行是 `server log: <SJ_HOME_PATH>\logs\server-<port>\server.<UTC 日期>.log`;`secret_key` 必須是 base58。
+  The output carries ANSI colour codes; the first stdout line at start is the `server log:` line; `secret_key` must be base58.
+- `shioaji server status` 的輸出是 toon 格式(`running: false` / `pid: null` / `port: 18080` / `healthy: false`);本套件不解析它,只記錄。
+  The output of `shioaji server status` is in toon format; this package does not parse it and only records the format.
+
+### 技術改進 / Technical
+
+- `FakeShioajiServerExe` 新增 `auth-fail` 行為(印實測的錯誤行到 stderr 後以 1 結束)、`FAKE_SHIOAJI_AFTER=auth-fail`(重啟後登入被拒)、
+  `FAKE_SHIOAJI_NO_LOG_LINE`,並且所有行為都先印 `server log:` 與帶色碼的一行,和真 server 一致。
+  `FakeShioajiServerExe` gains an `auth-fail` behaviour, `FAKE_SHIOAJI_AFTER=auth-fail` and `FAKE_SHIOAJI_NO_LOG_LINE`, and
+  every behaviour now prints a `server log:` line and a coloured line first, as the real server does.
+
 ## [0.1.0] - 2026-10-30
 
 **第一版(M0):讓桌面系統能啟動永豐金 Shioaji 的官方本機 server、看到行情、下一筆模擬單並收到回報。**
@@ -129,4 +192,5 @@ defensively and logs the first original text it sees.
   Not in this release: the mapping to the neutral `TradeKit.Abstractions` interfaces (M1), account data, historical
   data, combo orders, earmarking, `watchlist`, and regulatory lists.
 
+[0.1.1]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.1.0
