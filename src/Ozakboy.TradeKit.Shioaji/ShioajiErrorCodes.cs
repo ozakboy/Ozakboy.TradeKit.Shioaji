@@ -166,6 +166,23 @@ public static class ShioajiErrorCodes
     public const string ServerModeMismatch = "shioaji.server.mode_mismatch";
 
     /// <summary>
+    /// server 登入券商失敗(行程在就緒前退出,輸出含 <c>Authentication failed</c> 或 login validation error)。
+    /// 重試不會改善,監督器直接進入 Faulted。<see cref="ShioajiErrorDataKeys.Detail"/> 帶那一行輸出(已剝色碼、已遮罩)。
+    /// The server failed to log in to the broker (the process exited before readiness and its output contains
+    /// <c>Authentication failed</c> or a login validation error). Retrying will not help and the supervisor goes
+    /// straight to Faulted. <see cref="ShioajiErrorDataKeys.Detail"/> carries that output line, stripped of colour
+    /// codes and masked.
+    /// </summary>
+    public const string ServerAuthFailed = "shioaji.server.auth_failed";
+
+    /// <summary>
+    /// 憑證格式在本地就不符(例如 SecretKey 含 base58 以外的字元),沒有啟動行程。訊息不回顯任何字元。
+    /// A credential is malformed on the face of it (for example a SecretKey with characters outside base58); no
+    /// process was started. The message echoes no character.
+    /// </summary>
+    public const string ServerInvalidCredentials = "shioaji.server.invalid_credentials";
+
+    /// <summary>
     /// 目前的監督器狀態不允許這個操作(例如已經在啟動中)。
     /// The supervisor's current state does not allow this operation, for example it is already starting.
     /// </summary>

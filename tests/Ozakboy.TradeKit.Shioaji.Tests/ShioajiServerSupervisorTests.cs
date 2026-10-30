@@ -14,7 +14,7 @@ public sealed class ShioajiServerSupervisorTests
     private const string FakeProcessName = "FakeShioajiServerExe";
 
     private const string ApiKey = "AKEY-1234567890";
-    private const string SecretKey = "SECRET-ABCDEFGHIJ";
+    private const string SecretKey = "SecretKeyAbcdefghij"; // 必須是 base58:不含 0 O I l _ -
     private const string CaPath = "C:\\certs\\sinopac-ca-secret.pfx";
     private const string CaPassword = "CA-PASSWORD-XYZ";
 
@@ -603,6 +603,168 @@ public sealed class ShioajiServerSupervisorTests
             Assert.AreEqual(ShioajiServerState.Stopped, throwing.Status.State);
             Assert.AreEqual(0, Process.GetProcessesByName(FakeProcessName).Length);
         }
+    }
+
+    // ───────────────────────── 0.1.1:對真 shioaji 的實測事實 / 0.1.1: facts measured on the real shioaji ─────────────────────────
+
+    [TestMethod]
+    public async Task ColourCodesInTheOutput_AreStrippedBeforeTheLogAndTheLastLines()
+    {
+        await using var rig = Rig.Create();
+
+        Assert.IsTrue((await rig.Supervisor.StartAsync()).IsSuccess);
+
+        var all = rig.Logger.AllText;
+
+        Assert.DoesNotContain("\u001b", all, "no ANSI escape may reach the log");
+        Assert.Contains("INFO colored startup line", all);
+        Assert.Contains("2026-10-30T08:33:02.060484Z", all);
+    }
+
+    [TestMethod]
+    public void StripAnsi_RemovesEverySequenceAndNothingElse()
+    {
+        const string coloured = "\u001b[2m2026-10-30T08:33:02Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1;31mdone\u001b[0m [not-escape]";
+
+        Assert.AreEqual("2026-10-30T08:33:02Z  INFO done [not-escape]", ShioajiServerSupervisor.StripAnsi(coloured));
+        Assert.AreEqual("plain", ShioajiServerSupervisor.StripAnsi("plain"));
+    }
+
+    [TestMethod]
+    public async Task AFailedLogin_IsAuthFailed_StrippedMasked_AndGoesStraightToFaulted()
+    {
+        await using var rig = Rig.Create("auth-fail");
+
+        var result = await rig.Supervisor.StartAsync();
+
+        Assert.IsTrue(result.IsFailure);
+        Assert.AreEqual(ShioajiErrorCodes.ServerAuthFailed, result.Error.Code);
+        Assert.AreEqual("shioaji.server.auth_failed", result.Error.Code);
+        Assert.AreEqual(ErrorCategory.Unauthorized, result.Error.Category);
+        Assert.IsFalse(result.Error.IsTransient, "retrying cannot help");
+
+        var detail = result.Error.Data![ShioajiErrorDataKeys.Detail];
+
+        Assert.Contains("Authentication failed", detail);
+        Assert.Contains("invalid secret_key", detail);
+        Assert.DoesNotContain("\u001b", detail, "the detail line is stripped of colour codes");
+        Assert.AreEqual("1", result.Error.Data[ShioajiErrorDataKeys.ExitCode]);
+
+        Assert.AreEqual(ShioajiServerState.Faulted, rig.Supervisor.Status.State);
+        Assert.AreEqual(0, rig.Supervisor.Status.Restarts, "an authentication failure never enters the restart loop");
+        Assert.AreEqual(1, rig.CredentialCalls);
+        Assert.AreEqual(0, Process.GetProcessesByName(FakeProcessName).Length);
+    }
+
+    [TestMethod]
+    public async Task AnAuthFailureDuringARestart_StopsTheLoopInFaulted()
+    {
+        await using var rig = Rig.Create("crash-once", environment: new Dictionary<string, string> { ["FAKE_SHIOAJI_AFTER"] = "auth-fail" });
+
+        Assert.IsTrue((await rig.Supervisor.StartAsync()).IsSuccess);
+
+        var faulted = await rig.WaitUntilAsync(s => s.State == ShioajiServerState.Faulted, TimeSpan.FromSeconds(30));
+        var status = rig.Supervisor.Status;
+
+        Assert.IsTrue(faulted, $"state {status.State}, error {status.LastError}");
+        Assert.AreEqual(1, status.Restarts, "one restart was tried; the authentication failure ended the loop");
+        Assert.Contains("Authentication failed", status.LastError!);
+
+        await Task.Delay(600);
+        Assert.AreEqual(2, rig.CredentialCalls, "no third attempt");
+    }
+
+    [TestMethod]
+    public async Task TheServerLogPath_IsParsedFromTheFirstStdoutLine()
+    {
+        await using var rig = Rig.Create();
+
+        Assert.IsNull(rig.Supervisor.Status.LogFilePath, "nothing was started yet");
+        Assert.IsTrue((await rig.Supervisor.StartAsync()).IsSuccess);
+
+        var path = rig.Supervisor.Status.LogFilePath;
+
+        Assert.IsNotNull(path);
+        Assert.AreEqual(Path.Combine(rig.Home, "logs", $"server-{rig.Port}", "server.2026-10-30.log"), path);
+        Assert.DoesNotContain("\u001b", path);
+    }
+
+    [TestMethod]
+    public async Task TheServerLogPath_IsNullWhenTheLineNeverAppears_AndForAnAttachedServer()
+    {
+        using var external = new FakeShioajiHttpServer();
+        using var host = ShioajiTestHost.Create(external);
+
+        var attached = new ShioajiServerSupervisor(
+            new ShioajiServerOptions { BindAddress = external.BindAddress },
+            Credentials,
+            host.Auth);
+
+        await using (attached)
+        {
+            Assert.IsTrue((await attached.StartAsync()).IsSuccess);
+            Assert.IsNull(attached.Status.LogFilePath);
+        }
+
+        // 輸出裡沒有 `server log:` 那一行 → null。
+        // No `server log:` line in the output → null.
+        await using var rig = Rig.Create(environment: new Dictionary<string, string> { ["FAKE_SHIOAJI_NO_LOG_LINE"] = "1" });
+
+        Assert.IsTrue((await rig.Supervisor.StartAsync()).IsSuccess);
+        Assert.IsNull(rig.Supervisor.Status.LogFilePath);
+    }
+
+    [TestMethod]
+    [DataRow("bad_secret_key")]
+    [DataRow("has-dash")]
+    [DataRow("zeroO0")]
+    [DataRow("capitalI")]
+    [DataRow("lowerl")]
+    [DataRow("with space")]
+    [DataRow("")]
+    public async Task ANonBase58SecretKey_IsRefusedLocally_WithoutStartingAProcess_OrEchoingAnything(string secret)
+    {
+        var started = 0;
+        var supervisor = new ShioajiServerSupervisor(
+            new ShioajiServerOptions { ExecutablePath = FakeExecutable() },
+            () =>
+            {
+                started++;
+                return new ShioajiCredentials { ApiKey = "api-key-123456", SecretKey = secret };
+            },
+            _ => Task.FromResult(Result.Failure<ShioajiServerInfo>(new Error("test.down", "not running", ErrorCategory.Network))),
+            null,
+            null,
+            null);
+
+        await using (supervisor)
+        {
+            var result = await supervisor.StartAsync();
+
+            Assert.IsTrue(result.IsFailure);
+            Assert.AreEqual(ShioajiErrorCodes.ServerInvalidCredentials, result.Error.Code);
+            Assert.AreEqual("shioaji.server.invalid_credentials", result.Error.Code);
+            Assert.Contains("base58", result.Error.Message);
+
+            if (secret.Length > 0)
+            {
+                Assert.DoesNotContain(secret, result.Error.Message, "the message must not echo the secret");
+            }
+
+            Assert.AreEqual(1, started, "the provider was asked once");
+            Assert.AreEqual(ShioajiServerState.Stopped, supervisor.Status.State);
+            Assert.AreEqual(0, Process.GetProcessesByName(FakeProcessName).Length, "no process may be started");
+        }
+    }
+
+    [TestMethod]
+    public void Credentials_Validate_AcceptsBase58AndChecksOnlyTheSecret()
+    {
+        const string base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+        Assert.IsTrue(new ShioajiCredentials { ApiKey = "anything goes here_-!", SecretKey = base58 }.Validate().IsSuccess);
+        Assert.IsTrue(new ShioajiCredentials { ApiKey = "x", SecretKey = base58 }.Validate().IsSuccess);
+        Assert.IsTrue(new ShioajiCredentials { ApiKey = "x", SecretKey = "0" }.Validate().IsFailure);
     }
 
     [TestMethod]

@@ -54,6 +54,13 @@ public static class ShioajiErrorDataKeys
     public const string EventName = "eventName";
 
     /// <summary>
+    /// 一行說明文字(已剝色碼、已遮罩),例如認證失敗時 server 印出的那一行。
+    /// A line of explanatory text, stripped of colour codes and masked, such as the line a server prints when
+    /// authentication fails.
+    /// </summary>
+    public const string Detail = "detail";
+
+    /// <summary>
     /// 行程結束碼。
     /// The process exit code.
     /// </summary>

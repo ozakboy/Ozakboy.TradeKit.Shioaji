@@ -42,6 +42,32 @@ public sealed class ShioajiCredentials
     public string? CaPassword { get; init; }
 
     /// <summary>
+    /// 本地可以做的格式檢查:<see cref="SecretKey"/> 必須是 base58(實測 server 對不符的值直接登入失敗退出)。
+    /// 失敗訊息只說「格式不符」,<b>不回顯任何字元</b>。<see cref="ApiKey"/> 的格式未知,不檢查。
+    /// The format check that can be done locally: <see cref="SecretKey"/> must be base58 (a real server was measured
+    /// exiting at once on a value that is not). The failure message only says the format does not match and
+    /// <b>echoes no character</b>. The format of <see cref="ApiKey"/> is unknown and it is not checked.
+    /// </summary>
+    /// <returns>
+    /// 通過為成功;否則為 <see cref="ShioajiErrorCodes.ServerInvalidCredentials"/>。
+    /// Success when it passes, otherwise <see cref="ShioajiErrorCodes.ServerInvalidCredentials"/>.
+    /// </returns>
+    public Result Validate()
+    {
+        const string Base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+        if (string.IsNullOrEmpty(SecretKey) || SecretKey.Any(c => !Base58Alphabet.Contains(c, StringComparison.Ordinal)))
+        {
+            return new Error(
+                ShioajiErrorCodes.ServerInvalidCredentials,
+                "SecretKey 格式不符(base58),未啟動行程。SecretKey does not match the required format (base58); no process was started.",
+                ErrorCategory.Validation);
+        }
+
+        return Result.Success();
+    }
+
+    /// <summary>
     /// 不洩漏內容的字串表示。
     /// A string representation that reveals no content.
     /// </summary>

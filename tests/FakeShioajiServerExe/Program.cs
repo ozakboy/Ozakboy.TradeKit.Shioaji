@@ -52,6 +52,20 @@ if (arguments.Length < 2 || arguments[0] != "server" || arguments[1] != "start")
 var apiKey = Environment.GetEnvironmentVariable("SJ_API_KEY") ?? string.Empty;
 var caPassword = Environment.GetEnvironmentVariable("SJ_CA_PASSWD") ?? string.Empty;
 
+// 依 2026-10-30 對真 shioaji 的實測:啟動時 stdout 第一行是 `server log: <路徑>`,之後的日誌行帶 ANSI 色碼。
+// Per the 2026-10-30 measurement of the real shioaji: the first stdout line at start is `server log: <path>`, and the
+// log lines after it carry ANSI colour codes.
+var logDirectory = Path.Combine(home ?? Directory.GetCurrentDirectory(), "logs", "server-" + address[(address.LastIndexOf(':') + 1)..]);
+
+if (Environment.GetEnvironmentVariable("FAKE_SHIOAJI_NO_LOG_LINE") != "1")
+{
+    Console.WriteLine("server log: " + Path.Combine(logDirectory, "server.2026-10-30.log"));
+}
+
+Console.WriteLine("\u001b[2m2026-10-30T08:33:02.060484Z\u001b[0m \u001b[32m INFO\u001b[0m colored startup line");
+
+const string AuthFailureLine = "Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): provided string contained invalid character '_' at byte 5";
+
 Console.WriteLine("ARGS: " + string.Join(' ', arguments));
 Console.WriteLine($"ENV: SJ_PRODUCTION={Environment.GetEnvironmentVariable("SJ_PRODUCTION")} SJ_HTTP_AUTH={Environment.GetEnvironmentVariable("SJ_HTTP_AUTH")}");
 
@@ -64,6 +78,15 @@ if (mode == "crash")
 {
     Console.Error.WriteLine($"fatal: login failed for key {apiKey}");
     return 3;
+}
+
+if (mode == "auth-fail")
+{
+    // 實測:登入失敗時行程直接退出,錯誤行帶著色碼寫到輸出。這裡寫到 stderr 並以 1 結束。
+    // Measured: a failed login exits the process at once with the error line written to the output. Written to
+    // stderr here, exiting 1.
+    Console.Error.WriteLine("\u001b[31m" + AuthFailureLine + "\u001b[0m");
+    return 1;
 }
 
 if (mode == "exit")
@@ -105,6 +128,13 @@ if (mode == "crash-once")
     {
         lifetime = TimeSpan.FromMilliseconds(600);
         exitCode = 7;
+    }
+    else if (Environment.GetEnvironmentVariable("FAKE_SHIOAJI_AFTER") == "auth-fail")
+    {
+        // 第二次起登入就被拒,用來測重啟迴圈遇到認證失敗要直接 Faulted。
+        // From the second run on the login is refused, to test that the restart loop goes straight to Faulted.
+        Console.Error.WriteLine(AuthFailureLine);
+        return 1;
     }
 }
 else if (mode == "serve-then-crash")

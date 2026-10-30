@@ -86,4 +86,13 @@ public sealed record ShioajiServerStatus
     /// A description of the most recent failure, masked.
     /// </summary>
     public required string? LastError { get; init; }
+
+    /// <summary>
+    /// server 日誌檔的路徑,取自子行程啟動時 stdout 印出的 <c>server log: &lt;路徑&gt;</c> 那一行;解析不到(或沒有啟動過行程)為
+    /// <see langword="null"/>。讓宿主能把路徑顯示給使用者。
+    /// The path of the server's log file, taken from the <c>server log: &lt;path&gt;</c> line the child prints at start;
+    /// <see langword="null"/> when it could not be parsed or no process was started. It lets a host show the path
+    /// to the user.
+    /// </summary>
+    public required string? LogFilePath { get; init; }
 }

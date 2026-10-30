@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Ozakboy.Security.Masking;
@@ -53,16 +54,24 @@ namespace Ozakboy.TradeKit.Shioaji.Server;
 /// <see cref="ShioajiServerOptions.StableAfter"/> starts the consecutive count over.
 /// </para>
 /// <para>
-/// <b>沒有實機驗證。</b>這個型別只對「假的可執行檔」測試過,從未啟動過真正的 <c>shioaji</c>;
-/// <c>server start</c> 在前景執行還是自行脫離、輸出的格式、<c>server stop</c> 的行為都來自 CLI 的 <c>--help</c>
-/// 與文件,第一次實機執行請看日誌。
-/// <b>Not verified on a real machine.</b> This type has been exercised only against a fake executable and never
-/// started the real <c>shioaji</c>; whether <c>server start</c> stays in the foreground or detaches, its output
-/// format, and the behaviour of <c>server stop</c> come from the CLI's <c>--help</c> and the documentation, so read
-/// the log on the first real run.
+/// <b>實測事實(2026-10-30,假憑證):</b><c>shioaji server start --no-open</c> 是<b>前景行程,不脫離</b>;登入失敗時
+/// 直接退出,stdout 最後一行是 <c>Error: Authentication failed: …</c>;輸出帶 ANSI 色碼(本型別逐行剝除後才寫日誌);
+/// 啟動時印一行 <c>server log: &lt;路徑&gt;</c>(解析成 <see cref="ShioajiServerStatus.LogFilePath"/>)。
+/// 認證失敗 → <c>shioaji.server.auth_failed</c> 並直接 <see cref="ShioajiServerState.Faulted"/>,不進重啟迴圈。
+/// 「行程以 0 結束但 server 仍在回應」那條 Attached 路徑因此實務上不會發生,保留只是防禦。
+/// 沒量過的仍有:成功登入後的輸出、<c>server stop</c> 的行為;這個型別只對「假的可執行檔」跑過完整流程。
+/// <b>Measured facts (2026-10-30, fake credentials):</b> <c>shioaji server start --no-open</c> is a <b>foreground
+/// process that does not detach</b>; a failed login exits at once with <c>Error: Authentication failed: …</c> as the
+/// last stdout line; the output carries ANSI colour codes (stripped line by line before logging); and a
+/// <c>server log: &lt;path&gt;</c> line is printed at start (parsed into <see cref="ShioajiServerStatus.LogFilePath"/>).
+/// An authentication failure is <c>shioaji.server.auth_failed</c> and goes straight to
+/// <see cref="ShioajiServerState.Faulted"/> without a restart loop. The "process exits 0 while the server still
+/// answers" Attached path therefore does not happen in practice and is kept only defensively. Still unmeasured: the
+/// output after a successful login and the behaviour of <c>server stop</c>; only a fake executable has run the whole
+/// flow.
 /// </para>
 /// </remarks>
-public sealed class ShioajiServerSupervisor : IAsyncDisposable
+public sealed partial class ShioajiServerSupervisor : IAsyncDisposable
 {
     private const int TailLines = 20;
 
@@ -88,6 +97,7 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
     private int _consecutiveRestarts;
     private int? _lastExitCode;
     private string? _lastError;
+    private string? _logFilePath;
     private bool _ownsServer;
     private CancellationTokenSource? _monitorSource;
     private Task? _monitorTask;
@@ -173,6 +183,7 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
                     Restarts = _restarts,
                     LastExitCode = _lastExitCode,
                     LastError = _lastError,
+                    LogFilePath = _logFilePath,
                 };
             }
         }
@@ -431,7 +442,12 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
     {
         lock (_stateGate)
         {
-            _lastError = error.Message;
+            // 認證失敗的細節(server 印出的那一行,已剝色碼、已遮罩)一併記下,宿主只看 LastError 就知道原因。
+            // The authentication-failure detail, the line the server printed (stripped and masked), is kept too, so
+            // a host reading only LastError learns the cause.
+            _lastError = error.TryGetData(ShioajiErrorDataKeys.Detail, out var detail) && !string.IsNullOrEmpty(detail)
+                ? string.Concat(error.Message, " [", detail, "]")
+                : error.Message;
         }
     }
 
@@ -491,7 +507,14 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
         if (spawned.IsFailure)
         {
             RecordError(spawned.Error);
-            SetState(ShioajiServerState.Stopped);
+
+            // 認證失敗重試不會變好(同一組憑證只會得到同一個答案),所以直接 Faulted,不進任何重啟迴圈。
+            // An authentication failure does not improve on a retry (the same credentials earn the same answer), so
+            // it goes straight to Faulted and never enters a restart loop.
+            SetState(
+                string.Equals(spawned.Error.Code, ShioajiErrorCodes.ServerAuthFailed, StringComparison.Ordinal)
+                    ? ShioajiServerState.Faulted
+                    : ShioajiServerState.Stopped);
 
             return spawned;
         }
@@ -554,6 +577,16 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
             return StartFailed("憑證提供者回傳了 null。 / The credentials provider returned null.");
         }
 
+        // 本地先檢查 secret_key 的格式:實測 server 會因為格式不符直接登入失敗退出,沒必要多啟動一個行程去得到同一個答案。
+        // The secret key's format is checked locally first: a real server was measured exiting at once on a malformed
+        // one, so there is no point starting a process to learn the same thing.
+        var valid = credentials.Validate();
+
+        if (valid.IsFailure)
+        {
+            return valid;
+        }
+
         RegisterSecrets(credentials);
 
         var startInfo = BuildStartInfo(executable, credentials);
@@ -561,6 +594,11 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
         lock (_tailGate)
         {
             _tail.Clear();
+        }
+
+        lock (_stateGate)
+        {
+            _logFilePath = null;
         }
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -719,6 +757,19 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
 
     private Error ExitedEarly(int? exitCode)
     {
+        var authLine = FindAuthFailureLine();
+
+        if (authLine is not null)
+        {
+            var failure = new Error(
+                    ShioajiErrorCodes.ServerAuthFailed,
+                    "shioaji server 登入券商失敗(認證被拒),重試不會改善,請檢查金鑰、密鑰與憑證。細節見 Data 的 detail。The shioaji server failed to log in to the broker (authentication refused); retrying will not help, so check the key, secret and certificate. See detail in Data.",
+                    ErrorCategory.Unauthorized)
+                .WithData(ShioajiErrorDataKeys.Detail, authLine);
+
+            return exitCode is { } authExit ? failure.WithData(ShioajiErrorDataKeys.ExitCode, authExit) : failure;
+        }
+
         var error = new Error(
             ShioajiErrorCodes.ServerExitedEarly,
             string.Create(
@@ -862,6 +913,17 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
 
                 RecordError(spawned.Error);
                 ShioajiServerLog.RestartFailed(_logger, Mask(spawned.Error.Message));
+
+                // 認證失敗與憑證格式不符,重試只會得到同一個答案:不再繼續重啟迴圈。
+                // An authentication failure or a malformed credential would earn the same answer again: the restart
+                // loop stops here.
+                if (spawned.Error.Code is ShioajiErrorCodes.ServerAuthFailed or ShioajiErrorCodes.ServerInvalidCredentials)
+                {
+                    ReleaseExitedProcess();
+                    SetState(ShioajiServerState.Faulted);
+
+                    return false;
+                }
             }
             catch (OperationCanceledException)
             {
@@ -1119,7 +1181,20 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
             return;
         }
 
-        var masked = Mask(line);
+        // 真的 shioaji 輸出帶 ANSI 色碼:先剝掉再遮罩,日誌、最後 20 行與 LogFilePath 都用剝過的版本。
+        // The real shioaji output carries ANSI colour codes: they are stripped before masking, and the log, the last
+        // 20 lines and LogFilePath all use the stripped text.
+        var masked = Mask(StripAnsi(line));
+
+        var logMatch = LogFileLine().Match(masked);
+
+        if (logMatch.Success)
+        {
+            lock (_stateGate)
+            {
+                _logFilePath ??= logMatch.Groups[1].Value.Trim();
+            }
+        }
 
         lock (_tailGate)
         {
@@ -1139,6 +1214,41 @@ public sealed class ShioajiServerSupervisor : IAsyncDisposable
         {
             ShioajiServerLog.Output(_logger, masked);
         }
+    }
+
+    [GeneratedRegex(@"\u001b\[[0-9;]*[A-Za-z]", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
+    private static partial Regex AnsiEscape();
+
+    [GeneratedRegex(@"server log: (.+)$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
+    private static partial Regex LogFileLine();
+
+    /// <summary>
+    /// 剝掉 ANSI escape sequence(<c>ESC [ … 字母</c>)。
+    /// Strips ANSI escape sequences (<c>ESC [ … letter</c>).
+    /// </summary>
+    internal static string StripAnsi(string text) => AnsiEscape().Replace(text, string.Empty);
+
+    /// <summary>
+    /// 在最後 20 行裡找認證失敗的那一行:優先 <c>Authentication failed</c>,其次 <c>login validation error</c> 與
+    /// <c>invalid secret_key</c> / <c>invalid api_key</c>。回傳的一行已剝色碼、已遮罩。
+    /// Finds the authentication-failure line in the last 20: <c>Authentication failed</c> first, then
+    /// <c>login validation error</c> and <c>invalid secret_key</c> / <c>invalid api_key</c>. The line returned is
+    /// stripped of colour codes and masked.
+    /// </summary>
+    private string? FindAuthFailureLine()
+    {
+        string[] lines;
+
+        lock (_tailGate)
+        {
+            lines = [.. _tail];
+        }
+
+        return lines.LastOrDefault(l => l.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase))
+            ?? lines.LastOrDefault(l =>
+                l.Contains("login validation error", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("invalid secret_key", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("invalid api_key", StringComparison.OrdinalIgnoreCase));
     }
 
     private string TailText()
