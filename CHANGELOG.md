@@ -15,12 +15,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 sources, margin and short balances, the disposition and attention lists), a traffic meter, and a list-everything contract
 call.**
 
-這一版新增的端點**沒有對真的 `shioaji server` 跑過**(沒有有效憑證),測試對著本機假伺服器與依文件手工建構的 fixture(見
-`Fixtures/PROVENANCE.md`)。**全市場日 OHLCV 的 HTTP 路徑與回應形狀文件都沒寫,屬於未驗證的推定,待實機 OpenAPI 確認。**
-The endpoints added here have **not been run against a real `shioaji server`** (no valid credentials); the tests use the
-local fake server and fixtures built by hand from the documentation (see `Fixtures/PROVENANCE.md`). **Neither the HTTP
-path nor the response shape of the all-market daily OHLCV is documented; both are unverified inferences awaiting a real
-server's OpenAPI.**
+`GetKbarsAsync`、`GetTicksAsync`、`GetUsageAsync`、商品列表與商品詳細資料已於 2026-10-31 對真的 `shioaji server`(模擬環境)實測:
+1 分 K 的 `Time` 是該分鐘的**結束**時刻(2330 每日 09:01 至 13:30),`Volume` 是張、`Amount` 是元;逐筆一天約 7,400 筆、0.4 MB。
+其餘端點(快照、全市場日 OHLCV、排行、券源、資券、處置股)仍只對著本機假伺服器與依文件手工建構的 fixture(見
+`Fixtures/PROVENANCE.md`)測過。**全市場日 OHLCV 的 HTTP 路徑與回應形狀文件都沒寫,屬於未驗證的推定,待實機 OpenAPI 確認。**
+`GetKbarsAsync`, `GetTicksAsync`, `GetUsageAsync`, the contract list and the contract info were run against a real
+`shioaji server` (simulation) on 2026-10-31: a bar's `Time` is the **end** of its minute (2330: 09:01 to 13:30 each day),
+`Volume` is in lots and `Amount` in TWD; one day of ticks is about 7,400 rows and 0.4 MB. The other endpoints (snapshots,
+the all-market daily OHLCV, the scanner, short-stock sources, margin balances, the regulatory lists) are still tested only
+against the local fake server and fixtures built by hand from the documentation (see `Fixtures/PROVENANCE.md`). **Neither
+the HTTP path nor the response shape of the all-market daily OHLCV is documented; both are unverified inferences awaiting a
+real server's OpenAPI.**
 
 ### 新增功能 / Added
 

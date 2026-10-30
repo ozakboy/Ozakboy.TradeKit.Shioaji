@@ -60,8 +60,12 @@ public sealed record ShioajiKbar
 {
     /// <summary>
     /// 這根 K 棒的時間(UTC)。回應裡不帶時區的字串視為台北牆上時間,固定減 8 小時。
+    /// 注意:券商給的是該分鐘的<b>結束</b>時刻(2026-10-31 實測 2330:每個交易日 09:01 至 13:30 共 266 根,
+    /// 09:01 含開盤集合競價、13:30 含收盤集合競價);套件原樣保留,要開盤時刻請自行減 1 分鐘。
     /// The bar's time in UTC. A string without an offset in the response is Taipei wall-clock time and 8 hours are
-    /// subtracted.
+    /// subtracted. Note: the broker gives the <b>end</b> of the minute (measured 2026-10-31 for 2330: 09:01 to 13:30,
+    /// 266 bars per trading day; 09:01 holds the opening call auction and 13:30 holds the closing one). The package
+    /// keeps it as is. Subtract 1 minute to get the open time.
     /// </summary>
     public required DateTimeOffset Time { get; init; }
 
