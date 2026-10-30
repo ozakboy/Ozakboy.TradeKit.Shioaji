@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Ozakboy.TradeKit.Shioaji.Auth;
 using Ozakboy.TradeKit.Shioaji.Contracts;
+using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
 using Ozakboy.TradeKit.Shioaji.Server;
@@ -173,5 +174,64 @@ public sealed class ReadmeQuickStartTests
         Assert.AreEqual(1002m, ticks[0].Close);
         Assert.AreEqual("a1b2c3d4", placed.GetValueOrThrow().Order.Id);
         Assert.AreEqual(2, server.Count("POST", "/api/v1/auth/subscribe_trade"), "securities and futures are subscribed once each");
+    }
+
+    /// <summary>
+    /// README「回補 1 分 K 與逐筆」那一段,逐行照抄。
+    /// The README section "Backfilling 1-minute bars and ticks", copied line by line.
+    /// </summary>
+    [TestMethod]
+    public async Task TheBackfillExample_ReadsBarsAndTicks_AndShowsTheTraffic()
+    {
+        using var server = new FakeShioajiHttpServer();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddShioaji(options => options.BaseUri = server.BaseUri);
+        await using var provider = services.BuildServiceProvider();
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var cancellationToken = cancellation.Token;
+        var output = new List<string>();
+        var auth = provider.GetRequiredService<ShioajiAuthClient>();
+
+        // ───────────────────────── README 開始 / README begins ─────────────────────────
+        var history = provider.GetRequiredService<ShioajiHistoryClient>();
+        var contract = new ShioajiContractRef { SecurityType = ShioajiSecurityType.Stock, Exchange = "TSE", Code = "2330" };
+
+        var bars = await history.GetKbarsAsync(contract, new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 30), cancellationToken);
+
+        if (bars.IsSuccess)
+        {
+            var page = bars.GetValueOrThrow();
+
+            if (page.PossiblyTrafficExhausted)
+            {
+                var usage = (await auth.GetUsageAsync(cancellationToken)).GetValueOrThrow();
+                output.Add($"remaining {usage.RemainingBytes} bytes"); // README: Console.WriteLine
+            }
+
+            foreach (var bar in page.Items)
+            {
+                output.Add($"{bar.Time:O} O{bar.Open} H{bar.High} L{bar.Low} C{bar.Close} V{bar.Volume}"); // README: Console.WriteLine
+            }
+        }
+
+        var ticks = await history.GetTicksAsync(
+            contract,
+            new DateOnly(2026, 10, 30),
+            ShioajiTicksQuery.Range(new TimeOnly(9, 0), new TimeOnly(9, 30)),
+            cancellationToken);
+
+        var traffic = provider.GetRequiredService<ShioajiTrafficMeter>().Snapshot();
+        output.Add($"used {traffic.Bytes} bytes, resets {traffic.NextResetAt:O}"); // README: Console.WriteLine
+        // ───────────────────────── README 結束 / README ends ─────────────────────────
+
+        Assert.IsTrue(bars.IsSuccess, bars.Error?.ToString());
+        Assert.IsTrue(ticks.IsSuccess, ticks.Error?.ToString());
+        Assert.HasCount(2, bars.GetValueOrThrow().Items);
+        Assert.HasCount(2, ticks.GetValueOrThrow().Items);
+        Assert.Contains("O1000 H1002 L999.5 C1001.5 V120", output[0]);
+        Assert.IsTrue(traffic.Bytes > 0, "both responses were counted");
+        Assert.HasCount(3, output);
     }
 }

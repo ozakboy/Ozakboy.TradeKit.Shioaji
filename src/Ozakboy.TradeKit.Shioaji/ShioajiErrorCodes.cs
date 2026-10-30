@@ -119,6 +119,25 @@ public static class ShioajiErrorCodes
     public const string OrderResponseUnreadable = "shioaji.order.response_unreadable";
 
     /// <summary>
+    /// 1 分 K 的查詢區間超過 30 天(含頭尾),請求沒有送出。
+    /// The 1-minute-bar range exceeds 30 days, both ends included; nothing was sent.
+    /// </summary>
+    public const string HistoryRangeTooLong = "shioaji.history.range_too_long";
+
+    /// <summary>
+    /// 快照查詢的商品數超過 500,請求沒有送出。
+    /// A snapshot query carries more than 500 contracts; nothing was sent.
+    /// </summary>
+    public const string HistoryTooManyContracts = "shioaji.history.too_many_contracts";
+
+    /// <summary>
+    /// 歷史資料回應是 2xx,但欄位陣列的長度不一致,或欄位不是陣列。整筆失敗,不會送出缺半邊的資料。
+    /// A historical-data response was 2xx but its column arrays differ in length or a column is not an array. The
+    /// whole response fails; half-filled data is never handed out.
+    /// </summary>
+    public const string HistoryMalformed = "shioaji.history.malformed";
+
+    /// <summary>
     /// 串流事件讀不懂(必要欄位缺漏、數值無法解析)。串流不會因此結束。
     /// A stream event could not be read (a required field is missing or a number is unreadable). The stream
     /// carries on.

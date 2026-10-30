@@ -7,6 +7,7 @@ using Ozakboy.Http;
 using Ozakboy.Security.Masking;
 using Ozakboy.TradeKit.Shioaji.Auth;
 using Ozakboy.TradeKit.Shioaji.Contracts;
+using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
 using Ozakboy.TradeKit.Shioaji.Server;
@@ -22,10 +23,12 @@ public static class ShioajiServiceCollectionExtensions
 {
     /// <summary>
     /// 註冊 Shioaji 本機 HTTP server 的用戶端:選項、經 <c>Ozakboy.Http</c> 管線的具名 <see cref="HttpClient"/>、
-    /// 低階與各區塊 client、串流讀取器與本地限流預算。
+    /// 低階與各區塊 client(含歷史資料 <see cref="ShioajiHistoryClient"/>)、串流讀取器、本地限流預算與流量計
+    /// <see cref="ShioajiTrafficMeter"/>。
     /// Registers the clients for the Shioaji local HTTP server: the options, a named <see cref="HttpClient"/>
-    /// going through the <c>Ozakboy.Http</c> pipeline, the low-level and area clients, the stream reader, and the
-    /// local rate budget.
+    /// going through the <c>Ozakboy.Http</c> pipeline, the low-level and area clients (the historical-data
+    /// <see cref="ShioajiHistoryClient"/> among them), the stream reader, the local rate budget, and the traffic
+    /// meter <see cref="ShioajiTrafficMeter"/>.
     /// </summary>
     /// <param name="services">服務集合。The service collection.</param>
     /// <param name="configure">
@@ -128,6 +131,11 @@ public static class ShioajiServiceCollectionExtensions
         services.AddSingleton(provider =>
             new ShioajiRateBudget(options.RateBudget, provider.GetService<TimeProvider>()));
 
+        // 流量計:每個經過低階用戶端的回應都記進來,必須是單例才會累計成一天的量。
+        // The traffic meter: every response through the low-level client is recorded in it, and it must be a
+        // singleton to add up to a day's worth.
+        services.AddSingleton(provider => new ShioajiTrafficMeter(provider.GetService<TimeProvider>()));
+
         // 門面交給 Ozakboy.Http 從註冊處建立:它帶入這個具名用戶端的遮罩器、同一份逾時設定與容器裡的時間來源。
         // The facade is built by Ozakboy.Http from the registration, which brings in this client's masker, the same
         // timeout settings, and the container's time source.
@@ -135,13 +143,23 @@ public static class ShioajiServiceCollectionExtensions
 
         services.AddSingleton(provider => new ShioajiApiClient(
             provider.GetRequiredService<HttpPipelineClient>(),
-            provider.GetOzakboyHttpMasker(ShioajiConstants.HttpClientName)));
+            provider.GetOzakboyHttpMasker(ShioajiConstants.HttpClientName),
+            provider.GetRequiredService<ShioajiTrafficMeter>()));
 
         services.AddSingleton(provider => new ShioajiAuthClient(
             provider.GetRequiredService<ShioajiApiClient>(),
+            provider.GetRequiredService<ShioajiRateBudget>(),
+            provider.GetRequiredService<ShioajiTrafficMeter>()));
+
+        services.AddSingleton(provider => new ShioajiContractClient(
+            provider.GetRequiredService<ShioajiApiClient>(),
             provider.GetRequiredService<ShioajiRateBudget>()));
 
-        services.AddSingleton(provider => new ShioajiContractClient(provider.GetRequiredService<ShioajiApiClient>()));
+        services.AddSingleton(provider => new ShioajiHistoryClient(
+            provider.GetRequiredService<ShioajiApiClient>(),
+            provider.GetRequiredService<ShioajiRateBudget>(),
+            options,
+            provider.GetRequiredService<ShioajiTrafficMeter>()));
 
         services.AddSingleton(provider => new ShioajiQuoteClient(
             provider.GetRequiredService<ShioajiApiClient>(),

@@ -159,6 +159,79 @@ internal static partial class ShioajiTimestamps
     }
 
     /// <summary>
+    /// 由整數(或帶小數)的 epoch 時間戳組出 UTC 時間,依數值大小判斷單位:絕對值小於 1e11 為秒、小於 1e14 為毫秒、
+    /// 小於 1e17 為微秒、其餘為奈秒。零與負數視為沒有時間,回傳 <see langword="false"/>。
+    /// Builds a UTC time from an integer (or fractional) epoch timestamp, judging the unit by magnitude: below 1e11
+    /// is seconds, below 1e14 milliseconds, below 1e17 microseconds, anything above nanoseconds. Zero and negative
+    /// values mean no time and return <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// 2026 年的秒是 10 位數、毫秒 13 位數、微秒 16 位數、奈秒 19 位數,四個區間彼此隔了好幾個數量級,
+    /// 所以門檻不會把一個現代時間判成錯的單位。
+    /// In 2026 seconds have 10 digits, milliseconds 13, microseconds 16 and nanoseconds 19, so the four ranges are
+    /// orders of magnitude apart and the thresholds cannot put a modern time in the wrong unit.
+    /// </remarks>
+    public static bool TryFromEpoch(decimal value, out DateTimeOffset utc)
+    {
+        utc = default;
+
+        if (value <= 0m)
+        {
+            return false;
+        }
+
+        var ticks = value switch
+        {
+            < 100_000_000_000m => value * TimeSpan.TicksPerSecond,
+            < 100_000_000_000_000m => value * TimeSpan.TicksPerMillisecond,
+            < 100_000_000_000_000_000m => value * TimeSpan.TicksPerMillisecond / 1000m,
+            _ => value / 100m,
+        };
+
+        ticks = decimal.Truncate(ticks);
+
+        var epochTicks = DateTimeOffset.UnixEpoch.UtcTicks;
+        var max = DateTimeOffset.MaxValue.UtcTicks - epochTicks;
+
+        if (ticks > max)
+        {
+            return false;
+        }
+
+        utc = new DateTimeOffset(epochTicks + (long)ticks, TimeSpan.Zero);
+        return true;
+    }
+
+    /// <summary>
+    /// 讀一個欄位陣列裡的時間格:字串(ISO 日期時間,不帶時區視為台北牆上時間)或數字(epoch,單位依大小判斷,見
+    /// <see cref="TryFromEpoch"/>),字串型的數字也收。
+    /// Reads a time cell of a column array: a string (an ISO date-time, Taipei wall-clock time when it carries no
+    /// offset) or a number (an epoch whose unit is judged by magnitude, see <see cref="TryFromEpoch"/>); a
+    /// string-typed number is accepted too.
+    /// </summary>
+    public static bool TryReadColumnTime(JsonElement value, out DateTimeOffset utc)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Number when value.TryGetDecimal(out var number):
+                return TryFromEpoch(number, out utc);
+            case JsonValueKind.String:
+                var text = value.GetString();
+
+                if (TryFromDateTimeText(text, out utc))
+                {
+                    return true;
+                }
+
+                return decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                    && TryFromEpoch(parsed, out utc);
+            default:
+                utc = default;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// 讀一個可能是數字(Unix 秒)或字串(日期時間)的時間欄位。
     /// Reads a time field that may be a number (Unix seconds) or a string (a date-time).
     /// </summary>

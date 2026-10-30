@@ -40,6 +40,13 @@ public sealed record ShioajiContract
     /// must carry it.
     /// </summary>
     public required string? TargetCode { get; init; }
+
+    /// <summary>
+    /// 轉成歷史資料與快照請求用的商品參照。
+    /// Converts to the contract reference that historical-data and snapshot requests use.
+    /// </summary>
+    /// <returns>指稱這個商品的參照。A reference naming this contract.</returns>
+    public ShioajiContractRef ToRef() => ShioajiContractRef.From(this);
 }
 
 /// <summary>

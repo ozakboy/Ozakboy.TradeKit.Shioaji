@@ -121,6 +121,60 @@ public sealed class ShioajiOptionsTests
     }
 
     [TestMethod]
+    public void DailyQuotesPath_DefaultsToTheUnverifiedConstant_AndMustBeARootedPath()
+    {
+        var options = new ShioajiOptions();
+
+        Assert.AreEqual(ShioajiApiPaths.DailyQuotes, options.DailyQuotesPath);
+        Assert.IsTrue(options.Validate().IsSuccess);
+
+        options.DailyQuotesPath = "/api/v1/data/daily-quotes";
+        Assert.IsTrue(options.Validate().IsSuccess);
+
+        foreach (var bad in new[] { "", "   ", "api/v1/data/daily_quotes", "https://example.test/x" })
+        {
+            options.DailyQuotesPath = bad;
+
+            Assert.AreEqual(ShioajiErrorCodes.InvalidOptions, options.Validate().Error!.Code, $"'{bad}'");
+        }
+
+        var exception = Assert.ThrowsExactly<ArgumentException>(() =>
+            new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddShioaji(o => o.DailyQuotesPath = "daily"));
+
+        Assert.Contains("DailyQuotesPath", exception.Message);
+    }
+
+    [TestMethod]
+    public void ApiPaths_AreTheDocumentedEndpoints()
+    {
+        string[] expected =
+        [
+            "/api/v1/data/kbars",
+            "/api/v1/data/ticks",
+            "/api/v1/data/snapshots",
+            "/api/v1/data/scanner",
+            "/api/v1/data/short_stock_sources",
+            "/api/v1/data/credit_enquire",
+            "/api/v1/data/regulatory_punish",
+            "/api/v1/data/regulatory_notice",
+        ];
+
+        CollectionAssert.AreEqual(
+            expected,
+            new[]
+            {
+                ShioajiApiPaths.Kbars,
+                ShioajiApiPaths.Ticks,
+                ShioajiApiPaths.Snapshots,
+                ShioajiApiPaths.Scanner,
+                ShioajiApiPaths.ShortStockSources,
+                ShioajiApiPaths.CreditEnquire,
+                ShioajiApiPaths.RegulatoryPunish,
+                ShioajiApiPaths.RegulatoryNotice,
+            });
+    }
+
+    [TestMethod]
     public void Credentials_ToStringRevealsNothing()
     {
         var credentials = new ShioajiCredentials

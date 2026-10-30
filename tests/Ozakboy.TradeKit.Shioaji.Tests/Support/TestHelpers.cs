@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Ozakboy.TradeKit.Shioaji.Auth;
 using Ozakboy.TradeKit.Shioaji.Contracts;
+using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
 using Ozakboy.TradeKit.Shioaji.Streaming;
@@ -79,6 +80,10 @@ internal sealed class ShioajiTestHost : IDisposable
     public ShioajiQuoteClient Quotes => _provider.GetRequiredService<ShioajiQuoteClient>();
 
     public ShioajiOrderClient Orders => _provider.GetRequiredService<ShioajiOrderClient>();
+
+    public ShioajiHistoryClient History => _provider.GetRequiredService<ShioajiHistoryClient>();
+
+    public ShioajiTrafficMeter Traffic => _provider.GetRequiredService<ShioajiTrafficMeter>();
 
     public ShioajiStreamReader Stream => _provider.GetRequiredService<ShioajiStreamReader>();
 

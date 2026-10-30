@@ -8,6 +8,104 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-30
+
+**加入歷史資料與查詢(K 線、逐筆、快照、全市場日 OHLCV、排行掃描、借券券源、資券餘額、處置股與注意股)、流量計與全商品列表。**
+**Adds historical data and queries (bars, ticks, snapshots, the all-market daily OHLCV, the ranking scanner, short-stock
+sources, margin and short balances, the disposition and attention lists), a traffic meter, and a list-everything contract
+call.**
+
+這一版新增的端點**沒有對真的 `shioaji server` 跑過**(沒有有效憑證),測試對著本機假伺服器與依文件手工建構的 fixture(見
+`Fixtures/PROVENANCE.md`)。**全市場日 OHLCV 的 HTTP 路徑與回應形狀文件都沒寫,屬於未驗證的推定,待實機 OpenAPI 確認。**
+The endpoints added here have **not been run against a real `shioaji server`** (no valid credentials); the tests use the
+local fake server and fixtures built by hand from the documentation (see `Fixtures/PROVENANCE.md`). **Neither the HTTP
+path nor the response shape of the all-market daily OHLCV is documented; both are unverified inferences awaiting a real
+server's OpenAPI.**
+
+### 新增功能 / Added
+
+- **`ShioajiHistoryClient`**:`GetKbarsAsync`(1 分 K,`POST /api/v1/data/kbars`)、`GetTicksAsync`(`AllDay` / `RangeTime` /
+  `LastCount`,`POST /api/v1/data/ticks`)、`GetSnapshotsAsync`(`POST /api/v1/data/snapshots`)、`GetDailyQuotesAsync`、
+  `GetScannerAsync`、`GetShortStockSourcesAsync`、`GetCreditEnquireAsync`、`GetRegulatoryPunishAsync`、
+  `GetRegulatoryNoticeAsync`。全部在本地檢查之後才過 `MarketQuery` 預算(10 秒 50 次),POST 永不重試。商品用新的
+  `ShioajiContractRef { SecurityType, Exchange, Code }` 指稱,可由 `ShioajiContract.ToRef()` 或 `ShioajiContractRef.From` 轉出。
+  Every call goes through the `MarketQuery` budget after its local checks, and POST is never retried. Contracts are named with
+  the new `ShioajiContractRef`, convertible from a `ShioajiContract`.
+- **本地先擋的請求**:1 分 K 區間超過 30 個日曆日(含頭尾)→ `shioaji.history.range_too_long`;起始日晚於結束日、逐筆條件不合法
+  (`RangeTime` 缺時間或起訖顛倒、`LastCount` 小於 1)、商品類別不明或代碼空白、`count` 超出 0 到 200、借券券源 / 資券餘額帶了非股票 →
+  `shioaji.validation.invalid_argument`;快照超過 500 檔 → `shioaji.history.too_many_contracts`。全部在請求送出之前拒絕,
+  不佔預算。
+  Refused locally, before the request and without taking a budget unit: a bar range over 30 calendar days (both ends counted), a start
+  after the end, bad tick conditions, an unknown security type or blank code, a scanner `count` outside 0 to 200, a non-stock in the
+  stock-only queries, and more than 500 snapshot contracts.
+- **`ShioajiHistoryPage<T>`**(`Items`、`ResponseBytes`、`IsEmpty`、`PossiblyTrafficExhausted`)。券商每日流量超量時行情查詢**不報錯、只回空值**,
+  所以空頁不等於沒有資料:今天還沒向 server 查過用量時空頁一律標成「可能用完」,查過之後依「server 回報的剩餘量減去之後本地又累計的位元組」判斷。
+  Over the daily traffic allowance market queries **answer with empty values instead of an error**, so an empty page is not proof of
+  no data: with no usage fetched from the server today an empty page is always flagged as possibly exhausted, and afterwards the flag
+  follows the server's remainder minus what was accumulated locally since.
+- **欄位陣列解析器 `ShioajiColumnarReader`**(內部):`kbars` 與 `ticks` 的 `{datetime: […], Open: […], …}`。任一欄位長度不一致、必要欄位不是陣列
+  → 整筆 `shioaji.history.malformed`;`datetime` 是 ISO 字串(不帶時區視為台北牆上時間,固定減 8 小時)或整數 epoch(依大小判斷秒 / 毫秒 / 微秒 / 奈秒);
+  數字由原始文字讀成 `decimal`,不經 `double`;格子讀不懂回 `shioaji.response.missing_field`,錯誤資料帶欄位名與列號(`row`),絕不補 0;
+  空本文、`null`、`[]`、`{}`、欄位全是 `null` 或空陣列都是成功的空頁。
+  Columns of unequal length, or a required column that is not an array, fail the whole response with `shioaji.history.malformed`; a
+  `datetime` is an ISO string (Taipei wall-clock time when it has no offset, fixed UTC+8) or an integer epoch whose unit is judged by
+  magnitude; numbers are read from raw text into `decimal`, never `double`; an unreadable cell is `shioaji.response.missing_field` with
+  the column and the row, never zero; an empty body, `null`, `[]`, `{}` and all-null or all-empty columns are a successful empty page.
+- **`ShioajiTrafficMeter`**(單例,`TimeProvider` 注入):每個經過 `ShioajiApiClient` 的回應(含非 2xx)累計位元組(`Content-Length`,分塊傳輸時用實際讀到的
+  UTF-8 位元組數),按台北流量日分桶、每日 08:00(= UTC 00:00)重置;公開 `TodayBytes`、`TodayRequests`、`ServerReportedBytes`、`Record`、`Reset()`、
+  `Snapshot()`(含歷史桶最多 7 天、`NextResetAt`、估計剩餘量)。`ShioajiAuthClient.GetUsageAsync` 查到的用量會寫進 `ServerReportedBytes`。
+  **這是估計值,券商的帳以 `GetUsageAsync` 為準。**
+  A singleton on a `TimeProvider` that accumulates the bytes of every response through `ShioajiApiClient`, non-2xx included, in Taipei
+  traffic-day buckets reset at 08:00; it exposes `TodayBytes`, `Reset()`, `Snapshot()` and more, and receives the usage
+  `GetUsageAsync` fetches as `ServerReportedBytes`. It is an estimate; the broker's own count is `GetUsageAsync`.
+- **`ShioajiContractClient.ListAllContractsAsync(securityType)`**:每頁 500 筆走完所有分頁,每一頁過 `MarketQuery` 預算。遇到空頁、少於 500 筆、累計達到 `total`、
+  或單頁多於 500 筆(server 忽略分頁)就停;分頁沒前進(滿頁的第一筆與上一頁相同)或翻了 200 頁還沒結束 → `shioaji.response.malformed`。
+  Walks every page at 500 per page through the `MarketQuery` budget; stops on an empty page, a short page, the running count reaching
+  `total`, or a page over 500 (the server ignored paging); paging that does not advance, or 200 pages without an end, is
+  `shioaji.response.malformed`.
+- **`ShioajiOptions.DailyQuotesPath`** 與 **`ShioajiApiPaths`**(各端點路徑常數,`DailyQuotes` 預設 `/api/v1/data/daily_quotes`,**未驗證**)。
+  `Validate()` 要求它是以 `/` 開頭的路徑。
+  Overrides the path of the all-market daily OHLCV; `ShioajiApiPaths` holds the path constants.
+- **`AddShioaji`** 一併註冊 `ShioajiHistoryClient` 與 `ShioajiTrafficMeter`(單例)。
+  Registers `ShioajiHistoryClient` and `ShioajiTrafficMeter` as singletons.
+- 新的錯誤碼:`shioaji.history.range_too_long`、`shioaji.history.too_many_contracts`、`shioaji.history.malformed`;新的 `Error.Data` 鍵 `row`
+  (`ShioajiErrorDataKeys.Row`);新的常數 `ShioajiConstants.MaxKbarRangeDays`、`MaxSnapshotContracts`、`MaxScannerCount`、`TrafficResetHour`。
+  New error codes, one new `Error.Data` key and four new constants.
+
+### 功能優化 / Changed
+
+- `ShioajiApiClient`、`ShioajiAuthClient`、`ShioajiContractClient` 的建構式多了**選填的結尾參數**(流量計;預算),既有程式碼不需要改。
+  The constructors of `ShioajiApiClient`, `ShioajiAuthClient` and `ShioajiContractClient` gain optional trailing parameters, so existing
+  code needs no change.
+- 商品查詢的說明修正:單一商品查詢仍然不計入 `MarketQuery`,只有 `ListAllContractsAsync` 的每一頁計入。
+  Single-contract lookups still do not count against `MarketQuery`; only each page of `ListAllContractsAsync` does.
+
+### 技術改進 / Technical
+
+- `FakeShioajiHttpServer` 加了每個歷史端點的預設路由(`kbars`、`ticks` 是欄位陣列)與 `FakeResponse.Chunked`(分塊傳輸、不帶 `Content-Length`);
+  新的 fixtures 依文件手工建構,逐檔來源見 `Fixtures/PROVENANCE.md`。
+  The fake server gains default routes for every historical endpoint and a `Chunked` response option; new fixtures are hand-built, with
+  their provenance in `Fixtures/PROVENANCE.md`.
+- README 的「回補 1 分 K 與逐筆」範例有一個測試逐行照抄。
+  A test copies the README's backfill example line by line.
+
+### 已知限制 / Known limitations
+
+- **全市場日 OHLCV 的路徑與回應形狀未驗證**(文件只有命令列 `shioaji data daily-quotes`)。路徑不對回 `shioaji.http.404`,用 `DailyQuotesPath` 改。
+  The path and the response shape of the all-market daily OHLCV are unverified.
+- 除了 `kbars` 與 `ticks`,其餘歷史端點的回應形狀文件沒寫,是依 Python SDK 的回傳型別推定的;`short_stock_sources` 與 `credit_enquire` 的請求 body 也是推定。
+  Apart from `kbars` and `ticks`, the response shapes are inferred from the Python SDK, and so are the request bodies of
+  `short_stock_sources` and `credit_enquire`.
+- 數字型的 `datetime` 視為真正的 Unix epoch;Python SDK 的奈秒 `ts` 是把台北牆上時間當 UTC 寫的,HTTP server 若原樣轉出會晚 8 小時(ISO 字串不受影響)。
+  A numeric `datetime` is read as a true Unix epoch; the Python SDK's nanosecond `ts` carries Taipei wall-clock time as if it were UTC,
+  which would be 8 hours late if the HTTP server passes it through.
+- 1 分 K 的「≤ 30 天」取較保守的讀法:含頭尾共 30 個日曆日。
+  The "≤ 30 days" bar limit is read conservatively: 30 calendar days with both ends counted.
+- 本套件**不判斷現在是不是盤中**;「盤中禁止拿 `ticks` / `snapshots` / `kbars` 當即時報價」是呼叫端的責任。
+  This package does not decide whether the market is open; never using `ticks` / `snapshots` / `kbars` as live quotes is the caller's duty.
+- 仍從未用有效憑證對真的 `shioaji server` 跑過。
+  Still never run against a real `shioaji server` with valid credentials.
+
 ## [0.1.1] - 2026-10-30
 
 **依對真的 `shioaji server start --no-open` 的第一次實測(假憑證)調整:剝 ANSI 色碼、認證失敗專用錯誤碼、日誌檔路徑、本地檢查 `secret_key` 的 base58 格式。**
@@ -192,5 +290,6 @@ defensively and logs the first original text it sees.
   Not in this release: the mapping to the neutral `TradeKit.Abstractions` interfaces (M1), account data, historical
   data, combo orders, earmarking, `watchlist`, and regulatory lists.
 
+[0.2.0]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.1.0

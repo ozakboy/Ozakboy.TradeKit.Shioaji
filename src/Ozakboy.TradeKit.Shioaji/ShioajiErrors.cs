@@ -34,6 +34,30 @@ internal static class ShioajiErrors
                 ErrorCategory.Unexpected)
             .WithData(ShioajiErrorDataKeys.Field, field);
 
+    /// <summary>
+    /// 歷史資料回應的欄位陣列長度不一致,或欄位不是陣列。分類同 <see cref="MalformedResponse"/>。
+    /// A historical response whose column arrays differ in length or whose column is not an array; the category
+    /// is that of <see cref="MalformedResponse"/>.
+    /// </summary>
+    public static Error HistoryMalformed(string reason) =>
+        new(ShioajiErrorCodes.HistoryMalformed, reason, ErrorCategory.Unexpected);
+
+    public static Error HistoryRangeTooLong(DateOnly start, DateOnly end, int days, int maxDays) =>
+        new(
+            ShioajiErrorCodes.HistoryRangeTooLong,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"1 分 K 的查詢區間 {start:yyyy-MM-dd} 到 {end:yyyy-MM-dd} 共 {days} 天(含頭尾),超過上限 {maxDays} 天,請求未送出,請拆成多次查詢。The 1-minute-bar range {start:yyyy-MM-dd} to {end:yyyy-MM-dd} spans {days} days, both ends included, over the {maxDays}-day limit; nothing was sent, so split it into several queries."),
+            ErrorCategory.Validation);
+
+    public static Error HistoryTooManyContracts(int count, int max) =>
+        new(
+            ShioajiErrorCodes.HistoryTooManyContracts,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"快照查詢帶了 {count} 檔商品,超過單次上限 {max} 檔,請求未送出,請分批。The snapshot query carries {count} contracts, over the limit of {max}; nothing was sent, so send them in batches."),
+            ErrorCategory.Validation);
+
     public static Error MalformedEvent(string eventName, string reason) =>
         new Error(
                 ShioajiErrorCodes.StreamMalformedEvent,

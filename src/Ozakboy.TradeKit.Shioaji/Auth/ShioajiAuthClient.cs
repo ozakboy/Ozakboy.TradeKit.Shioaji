@@ -32,6 +32,7 @@ public sealed class ShioajiAuthClient
 {
     private readonly ShioajiApiClient _api;
     private readonly ShioajiRateBudget _budget;
+    private readonly ShioajiTrafficMeter? _trafficMeter;
 
     /// <summary>
     /// 建立用戶端。
@@ -39,16 +40,24 @@ public sealed class ShioajiAuthClient
     /// </summary>
     /// <param name="api">低階用戶端。The low-level client.</param>
     /// <param name="budget">本地限流預算。The local rate budget.</param>
+    /// <param name="trafficMeter">
+    /// 流量計;<see cref="GetUsageAsync"/> 查到的用量會寫進它的 <see cref="ShioajiTrafficMeter.ServerReportedBytes"/>。
+    /// <see langword="null"/> 表示不寫。
+    /// The traffic meter; the usage <see cref="GetUsageAsync"/> fetches is written to its
+    /// <see cref="ShioajiTrafficMeter.ServerReportedBytes"/>. <see langword="null"/> writes nothing.
+    /// </param>
     /// <exception cref="ArgumentNullException">
-    /// 任一參數為 <see langword="null"/> 時擲出。Thrown when an argument is <see langword="null"/>.
+    /// <paramref name="api"/> 或 <paramref name="budget"/> 為 <see langword="null"/> 時擲出。
+    /// Thrown when <paramref name="api"/> or <paramref name="budget"/> is <see langword="null"/>.
     /// </exception>
-    public ShioajiAuthClient(ShioajiApiClient api, ShioajiRateBudget budget)
+    public ShioajiAuthClient(ShioajiApiClient api, ShioajiRateBudget budget, ShioajiTrafficMeter? trafficMeter = null)
     {
         ArgumentNullException.ThrowIfNull(api);
         ArgumentNullException.ThrowIfNull(budget);
 
         _api = api;
         _budget = budget;
+        _trafficMeter = trafficMeter;
     }
 
     /// <summary>
@@ -119,7 +128,22 @@ public sealed class ShioajiAuthClient
 
         var body = await _api.GetStringAsync(path, cancellationToken).ConfigureAwait(false);
 
-        return body.IsFailure ? body.ToFailure<ShioajiUsage>() : ParseUsage(body.GetValueOrThrow());
+        if (body.IsFailure)
+        {
+            return body.ToFailure<ShioajiUsage>();
+        }
+
+        var usage = ParseUsage(body.GetValueOrThrow());
+
+        // 讀得懂的回報才寫進流量計:讀不懂的數字不能拿來估剩餘量。
+        // Only a report that could be read goes to the meter: a number that could not be read cannot estimate the
+        // remainder.
+        if (usage.IsSuccess)
+        {
+            _trafficMeter?.ReportServerUsage(usage.GetValueOrThrow());
+        }
+
+        return usage;
     }
 
     /// <summary>

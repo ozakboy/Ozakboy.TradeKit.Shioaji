@@ -14,10 +14,11 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 這個家族的政策是只用 .NET BCL、Microsoft 官方套件與 `Ozakboy.*`,判定看**遞移相依**而不是套件名稱;
 這裡的每一個相依都符合,見最後的「相依政策」。
 
-> **0.1.x 是 M0:讓桌面系統能啟動 server、看到行情、下一筆模擬單並收到回報。**
+> **0.1.x 是 M0:讓桌面系統能啟動 server、看到行情、下一筆模擬單並收到回報;0.2.0 加入歷史資料(K 線、逐筆、快照、全市場日 OHLCV 等)與流量計。**
 > 它**從未用有效憑證連上真的 `shioaji server`**:0.1.1 只有拿假憑證對真的 `shioaji server start` 跑過一次(量到啟動與登入失敗的行為,
 > 見「2026-10-30 對真 server 的實測事實」),其餘所有測試都對著本機假伺服器跑。
-> 哪些行為是照文件推定、哪些完全沒量過,全部列在「限制與未實測事項」。**上實盤之前請先讀那一段。**
+> 哪些行為是照文件推定、哪些完全沒量過,全部列在「限制與未實測事項」;**其中全市場日 OHLCV 的路徑與回應形狀尤其未驗證。**
+> **上實盤之前請先讀那一段。**
 
 ## 這一版做了什麼
 
@@ -28,13 +29,18 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 | 非預期退出的退避重啟,超過上限進入 Faulted | 已完成 |
 | `/api/v1/info`、帳號、流量、串流狀態、`subscribe_trade` / `unsubscribe_trade` | 已完成 |
 | 商品查詢:單一商品、詳細資訊(含當沖資格)、分頁列表、期貨列表 | 已完成 |
+| `ListAllContractsAsync`:以每頁 500 筆走完某個類別的所有分頁,每一頁先過 `MarketQuery` 預算(0.2.0) | 已完成 |
+| 歷史資料(`ShioajiHistoryClient`,0.2.0):1 分 K(本地檢查 30 天區間)、逐筆、快照(本地檢查 500 檔)、排行掃描、借券券源、資券餘額、處置股與注意股 | 已完成 —— 除了 K 線與逐筆,其餘回應形狀未驗證 |
+| 全市場日 OHLCV(`GetDailyQuotesAsync`,0.2.0) | 已完成,但**路徑與回應形狀都未驗證,待實機 OpenAPI 確認**;路徑可用 `ShioajiOptions.DailyQuotesPath` 覆寫 |
+| 欄位陣列回應(`datetime[]`、`Open[]` …):任一欄位長度不一致就整筆失敗(`shioaji.history.malformed`) | 已完成 |
+| 流量計(`ShioajiTrafficMeter`,0.2.0):回應位元組按台北日分桶、08:00 重置,可與 server 自己回報的用量對照 | 已完成 |
 | 行情訂閱 / 取消,本地先擋三種會靜默失敗的訂閱 | 已完成 |
 | 聚合 SSE 串流:股票 / 期權的成交、五檔、合併報價、指數報價、委託回報 | 已完成 —— 欄位依文件,未對真 server 驗證 |
 | 斷線與閒置偵測、退避重連、重連後的重放回呼、生命週期事件、有界佇列 | 已完成 |
 | 下單(股票與期貨)、改價、改量、撤單、列出委託;下單類請求永不重試 | 已完成 |
 | 本地限流預算:行情查詢、帳務、委託、訂閱上限 | 已完成 |
 | 與 `TradeKit.Abstractions` 的中立介面對映(`IExchangeClient` 等) | 未做 —— M1 |
-| 帳務(`portfolio`)、歷史資料(K 線 / 逐筆 / 快照)、組合單、預收、處置股 | 未做 —— 見「未來」 |
+| 帳務(`portfolio`)、組合單、預收 | 未做 —— 見「未來」 |
 
 所有價格與數量都是 `decimal`,所有時間都是 UTC `DateTimeOffset`。預期的失敗一律回傳 `Result` / `Result<T>`,
 錯誤碼一律 `shioaji.` 開頭,集中在 `ShioajiErrorCodes`,每一個都附中英說明。
@@ -185,6 +191,63 @@ if (placed.IsFailure)
 
 這一段範例有一個測試逐行照抄(`ReadmeQuickStartTests`),對著假伺服器跑;範例壞了,測試就會紅。
 
+### 回補 1 分 K 與逐筆(0.2.0)
+
+```csharp
+// 收盤後回補。1 分 K 單次最多 30 天(含頭尾),逐筆一次一天。
+// 盤中不要拿它們當即時報價:即時行情請訂閱串流。
+var history = provider.GetRequiredService<ShioajiHistoryClient>();
+var contract = new ShioajiContractRef { SecurityType = ShioajiSecurityType.Stock, Exchange = "TSE", Code = "2330" };
+
+var bars = await history.GetKbarsAsync(contract, new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 30), cancellationToken);
+
+if (bars.IsSuccess)
+{
+    var page = bars.GetValueOrThrow();
+
+    if (page.PossiblyTrafficExhausted)
+    {
+        // 空回應有兩種可能:真的沒有資料,或當日流量用完(券商不報錯、只回空值)。
+        // 先查剩餘流量,再決定要不要把這一段存成「那天沒有行情」。
+        var usage = (await auth.GetUsageAsync(cancellationToken)).GetValueOrThrow();
+        Console.WriteLine($"剩餘 {usage.RemainingBytes} bytes");
+    }
+
+    foreach (var bar in page.Items)
+    {
+        Console.WriteLine($"{bar.Time:O} O{bar.Open} H{bar.High} L{bar.Low} C{bar.Close} V{bar.Volume}");
+    }
+}
+
+var ticks = await history.GetTicksAsync(
+    contract,
+    new DateOnly(2026, 10, 30),
+    ShioajiTicksQuery.Range(new TimeOnly(9, 0), new TimeOnly(9, 30)),
+    cancellationToken);
+
+// 本程序今天大概用了多少流量(回應本文的大小;券商自己的帳以 GetUsageAsync 為準)。
+var traffic = provider.GetRequiredService<ShioajiTrafficMeter>().Snapshot();
+Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.NextResetAt:O}");
+```
+
+`auth` 是主範例裡的 `ShioajiAuthClient`。這一段由同一個測試類別裡的 `TheBackfillExample_…` 逐行照抄。全市場日 OHLCV 是
+`history.GetDailyQuotesAsync(date)`;用它之前請先讀「限制與未實測事項」裡關於它的警告。
+
+### 歷史資料重點(0.2.0)
+
+- **本地檢查先做、而且不花任何額度。**1 分 K 區間超過 30 個日曆日(含頭尾)回 `shioaji.history.range_too_long`;起始日晚於結束日回
+  `shioaji.validation.invalid_argument`;快照超過 500 檔回 `shioaji.history.too_many_contracts`;逐筆條件不合法、商品類別不明、
+  代碼空白也會被拒絕。這些都不佔預算、不會送到 server。
+- **欄位陣列回應。**`kbars` 與 `ticks` 回 `{datetime: […], Open: […], …}`。欄位長度不一致就整筆回 `shioaji.history.malformed`:
+  某一筆的收盤價對到別筆的時間,比沒有資料更糟。`datetime` 是 ISO 字串(不帶時區視為台北牆上時間,減 8 小時)或依大小判斷單位的
+  epoch(秒、毫秒、微秒、奈秒)。數字由原始文字讀成 `decimal`。
+- **空頁不等於沒有資料。**結果是 `ShioajiHistoryPage<T>`,帶 `Items`、`ResponseBytes`、`IsEmpty` 與 `PossiblyTrafficExhausted`。
+  今天還沒查過 server 的用量時,空頁一律標成「可能用完」;呼叫過 `GetUsageAsync` 之後,旗標依「server 回報的剩餘量減去之後又用掉的」判斷。
+- **每次呼叫在本地檢查之後佔一個 `MarketQuery` 額度**(10 秒 50 次),POST 永不重試。
+- **流量計。**`ShioajiTrafficMeter` 是單例,每個經過 `ShioajiApiClient` 的回應都記進來(`Content-Length`,分塊傳輸時用實際讀到的位元組;
+  非 2xx 也算;不含 SSE 串流與請求本文)。按台北流量日分桶,每日 08:00(= UTC 00:00)重置,公開 `TodayBytes`、`Reset()`、`Snapshot()`。
+  **它是估計值**:券商自己的數字以 `GetUsageAsync` 為準,每次查到都會寫進流量計的 `ServerReportedBytes`。
+
 ## 幾個值得知道的設計決定
 
 ### 為什麼走官方 server,而不是自己寫 sidecar 或用社群套件
@@ -230,15 +293,16 @@ if (placed.IsFailure)
 
 | 類別 | 上限 | 目前計入的呼叫 |
 | --- | --- | --- |
-| `MarketQuery` | 10 秒 50 次 | 本版沒有(預留給歷史資料) |
+| `MarketQuery` | 10 秒 50 次 | `ShioajiHistoryClient` 的每一次呼叫;`ListAllContractsAsync` 的每一頁 |
 | `Portfolio` | 5 秒 25 次 | `GetUsageAsync`;`ListTradesAsync(refresh: true)` |
 | `Order` | 10 秒 250 次 | 下單、改價、改量、撤單;`ListTradesAsync(refresh: false)` |
 | `Subscription` | 同時 200 個 | `SubscribeAsync` +1,`UnsubscribeAsync` −1;重複訂同一筆不重複計,請求失敗會把剛計入的還回去 |
 
-商品查詢讀的是 server 本機的商品檔,不算券商的行情查詢,所以不計入 `MarketQuery`。預設值就是券商公告的上限,
-調大等於把處置線的風險交給你。另外有三條公告的紅線不在預算裡、而是要你自己遵守:
-**盤中禁止用 `ticks` / `snapshots` / `kbars` 當即時報價**(本版沒有這幾個端點,所以不會誤觸)、
-同一個身分最多 5 條連線(聚合串流只算一條 SSE 連線)、每日流量上限(`GetUsageAsync` 可以查剩多少)。
+單一商品查詢讀的是 server 本機的商品檔,不算券商的行情查詢,所以不計入 `MarketQuery`;只有一口氣連續翻很多頁的
+`ListAllContractsAsync` 每一頁佔一個額度。預設值就是券商公告的上限,調大等於把處置線的風險交給你。另外有三條公告的紅線不在預算裡、
+而是要你自己遵守:**盤中禁止用 `ticks` / `snapshots` / `kbars` 當即時報價**(0.2.0 起有這幾個端點了,而且
+**本套件不替你判斷現在是不是盤中**:`ShioajiHistoryClient` 是給收盤後回補用的,即時行情請走串流)、
+同一個身分最多 5 條連線(聚合串流只算一條 SSE 連線)、每日流量上限(`GetUsageAsync` 可以查剩多少,`ShioajiTrafficMeter` 看本程序用了多少)。
 
 ### 本地先擋三種會「靜默失敗」的訂閱
 
@@ -359,6 +423,19 @@ if (placed.IsFailure)
 - **欄位名。**`tick_stk` 的 `closing_oddlot_*` / `fixed_trade_*`、`quote_stk` 的 `avail_borrowing`、各種 `*_fop` 的細節欄位、
   `quote_idx` 的欄位,文件只寫了萬用字元或根本沒寫;名稱取自 Python SDK,**未在 HTTP 上驗證**。對不上時那個欄位是 `null`,
   不會讓事件失敗(只有代碼、時間、價格與五檔是必要的)。
+- **全市場日 OHLCV 的路徑與回應形狀(0.2.0)。**文件只提到命令列的 `shioaji data daily-quotes --date YYYY-MM-DD --exclude-warrant`,
+  沒有寫 HTTP 路徑。`GetDailyQuotesAsync` 對 `ShioajiOptions.DailyQuotesPath`(預設 **`/api/v1/data/daily_quotes`,未驗證,待實機 OpenAPI 確認**)
+  送 `POST`,body 是 `{date, exclude_warrant}`,並假設回應是物件陣列、每筆至少有 `code`、`open`、`high`、`low`、`close`、`volume`;
+  多餘的欄位在 `ShioajiDailyQuote.Raw`。路徑不對時回 `shioaji.http.404`:到 server 的 `/docs` 找真正的路徑,再設定 `DailyQuotesPath`。
+- **其他查詢端點的形狀(0.2.0)。**只有 `kbars` 與 `ticks` 的形狀有文件(帶欄位名的欄位陣列)。`snapshots`、`scanner`、`short_stock_sources`、
+  `credit_enquire` 與兩個監管清單讀成「物件陣列」(或包著陣列的物件;監管清單另收欄位陣列物件,Python SDK 就是這樣回的);
+  欄位名取自 Python SDK,**未在 HTTP 上驗證**,沒有對映成屬性的內容都留在每一筆的 `Raw`。`short_stock_sources` 與 `credit_enquire`
+  的請求 body(`{contracts: [...]}`)是比照 `snapshots` 推定的。
+- **流量用完時「空值」長什麼樣。**文件只說行情查詢回「空值」,沒說那是什麼。空本文、`null`、`[]`、`{}`、欄位全是 `null`、欄位全是空陣列
+  一律讀成空頁;若 server 用別的方式回應(例如錯誤本文),就會以那個錯誤浮現。
+- **epoch 型的 `datetime`(0.2.0)。**數字型的 `datetime` 視為真正的 Unix epoch(UTC)。已知 Python SDK 的奈秒 `ts` 是把台北牆上時間當成 UTC 寫的;
+  若 HTTP server 原樣轉出,這種格子會晚 8 小時。ISO 字串(本套件預期的形式)不受影響。
+- **1 分 K 的 30 天上限含不含頭尾。**券商寫「≤ 30 天」;本套件採較保守的讀法,含頭尾共 30 個日曆日。
 - **`shioaji server start` 是在前景執行還是自行脫離。**2026-10-30 實測:**前景、不脫離**(見上一節)。程式裡仍保留「行程以結束碼 0
   結束但 server 仍在回應 → Attached,停止時呼叫 `shioaji server stop`」那條防禦路徑,它只用腳本化的探測測過。
 - **`server stop` 的行為、`--port` 參數、SSE 連線是否計入 5 條登入連線、HTTP / SSE 實際延遲。**都沒量過。
@@ -372,8 +449,8 @@ if (placed.IsFailure)
 
 - 實作 `TradeKit.Abstractions` 的中立介面:`IExchangeClient`、`IMarketDataFeed`、`IUserDataFeed`(M1 再做對映)。
 - 帳務(`portfolio`):部位、損益、交割、保證金、交易額度。
-- 歷史資料:K 線、逐筆、快照 —— 這三個才會用到 `MarketQuery` 預算,也是「盤中禁令」開始需要被程式碼強制的地方。
-- 組合單、預收款項 / 預收股票、`watchlist`、處置股 / 注意股。
+- 用程式碼強制「盤中禁止拿歷史端點當即時報價」(0.2.0 只在文件寫明這條規則、交給呼叫端決定;要強制需要交易日曆)。
+- 組合單、預收款項 / 預收股票、`watchlist`。
 - 加值串流(`calculated_index`、`index_components`、`kbar`、`scanner`):目前它們會以 `ShioajiUnknownEvent` 原樣送出。
 
 ## 測試

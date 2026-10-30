@@ -202,6 +202,184 @@ public sealed class ShioajiContractClientTests
         Assert.AreEqual(ShioajiErrorCodes.MissingField, (await host.Contracts.ListContractsAsync(ShioajiSecurityType.Stock)).Error!.Code);
     }
 
+    // ───────────────────────────── ListAllContractsAsync ─────────────────────────────
+
+    private static string ContractItems(int firstIndex, int count) =>
+        string.Join(
+            ',',
+            Enumerable.Range(firstIndex, count).Select(i =>
+                string.Create(System.Globalization.CultureInfo.InvariantCulture, $$"""{"security_type":"STK","exchange":"TSE","code":"C{{i:D5}}"}""")));
+
+    private static int PageOf(FakeRequest request) =>
+        int.Parse(
+            request.Query.TrimStart('?').Split('&').Single(p => p.StartsWith("page=", StringComparison.Ordinal))["page=".Length..],
+            System.Globalization.CultureInfo.InvariantCulture);
+
+    [TestMethod]
+    public async Task ListAllContracts_WalksEveryPage_At500PerPage_UntilAShortPage()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", request => PageOf(request) switch
+        {
+            1 => new FakeResponse(200, $$"""{"items":[{{ContractItems(0, 500)}}],"page":1,"page_size":500}"""),
+            2 => new FakeResponse(200, $$"""{"items":[{{ContractItems(500, 500)}}],"page":2,"page_size":500}"""),
+            3 => new FakeResponse(200, $$"""{"items":[{{ContractItems(1000, 120)}}],"page":3,"page_size":500}"""),
+            _ => new FakeResponse(200, """{"items":[]}"""),
+        });
+        using var host = ShioajiTestHost.Create(server);
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock);
+
+        Assert.IsTrue(result.IsSuccess, result.Error?.ToString());
+        var all = result.GetValueOrThrow();
+        Assert.HasCount(1120, all);
+        Assert.AreEqual("C00000", all[0].Code);
+        Assert.AreEqual("C01119", all[^1].Code);
+        Assert.AreEqual(1120, all.Select(c => c.Code).Distinct().Count());
+        Assert.HasCount(3, server.Requests, "the short third page ends the walk");
+        Assert.AreEqual("?security_type=STK&page=1&page_size=500", server.Requests[0].Query);
+        Assert.AreEqual("?security_type=STK&page=3&page_size=500", server.Requests[2].Query);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_StopsAtTheReportedTotal_WithoutAskingForAnEmptyPage()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", 200, $$"""{"items":[{{ContractItems(0, 500)}}],"page":1,"page_size":500,"total":500}""");
+        using var host = ShioajiTestHost.Create(server);
+
+        var all = (await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock)).GetValueOrThrow();
+
+        Assert.HasCount(500, all);
+        Assert.HasCount(1, server.Requests);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_AFullPageWithNoTotal_NeedsOneMoreRequestToSeeTheEnd()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", request =>
+            PageOf(request) == 1 ? new FakeResponse(200, $"[{ContractItems(0, 500)}]") : new FakeResponse(200, "[]"));
+        using var host = ShioajiTestHost.Create(server);
+
+        var all = (await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock)).GetValueOrThrow();
+
+        Assert.HasCount(500, all);
+        Assert.HasCount(2, server.Requests);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_ServerThatIgnoresPaging_ReturnsEverythingFromTheFirstAnswer()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", 200, $"[{ContractItems(0, 700)}]");
+        using var host = ShioajiTestHost.Create(server);
+
+        var all = (await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock)).GetValueOrThrow();
+
+        Assert.HasCount(700, all);
+        Assert.HasCount(1, server.Requests, "700 is more than a page: the server returned everything at once");
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_APageThatRepeatsThePreviousOne_IsAFailureNotAnEndlessLoop()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", 200, $"[{ContractItems(0, 500)}]");
+        using var host = ShioajiTestHost.Create(server);
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock);
+
+        Assert.AreEqual(ShioajiErrorCodes.MalformedResponse, result.Error!.Code);
+        Assert.HasCount(2, server.Requests, "the second page is the one that repeats the first");
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_PagingThatNeverEnds_StopsAt200Pages()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", request =>
+            new FakeResponse(200, $"[{ContractItems((PageOf(request) - 1) * 500, 500)}]"));
+        using var host = ShioajiTestHost.Create(server, o => o.RateBudget.MarketQueryLimit = 1000);
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock);
+
+        Assert.AreEqual(ShioajiErrorCodes.MalformedResponse, result.Error!.Code);
+        Assert.HasCount(200, server.Requests);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_AFailureMidWay_ReturnsTheFailure_NotAHalfList()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", request =>
+            PageOf(request) == 1 ? new FakeResponse(200, $"[{ContractItems(0, 500)}]") : new FakeResponse(400, """{"detail":"bad page"}"""));
+        using var host = ShioajiTestHost.Create(server);
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock);
+
+        Assert.IsTrue(result.IsFailure);
+        Assert.AreEqual("shioaji.http.400", result.Error!.Code);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_AnUnknownType_IsRefusedBeforeAnyRequest()
+    {
+        using var server = new FakeShioajiHttpServer();
+        using var host = ShioajiTestHost.Create(server);
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Unknown);
+
+        Assert.AreEqual(ShioajiErrorCodes.InvalidArgument, result.Error!.Code);
+        Assert.IsEmpty(server.Requests);
+    }
+
+    [TestMethod]
+    public async Task ListAllContracts_EveryPageGoesThroughTheMarketQueryBudget()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts", request => PageOf(request) switch
+        {
+            1 => new FakeResponse(200, $"[{ContractItems(0, 500)}]"),
+            2 => new FakeResponse(200, $"[{ContractItems(500, 500)}]"),
+            _ => new FakeResponse(200, $"[{ContractItems(1000, 10)}]"),
+        });
+        using var host = ShioajiTestHost.Create(server, o =>
+        {
+            o.RateBudget.MarketQueryLimit = 2;
+            o.RateBudget.MaxWait = TimeSpan.Zero;
+        });
+
+        var result = await host.Contracts.ListAllContractsAsync(ShioajiSecurityType.Stock);
+
+        Assert.AreEqual(ShioajiErrorCodes.RateBudgetExhausted, result.Error!.Code, "the third page found the budget spent");
+        Assert.HasCount(2, server.Requests, "the page the budget refused was never sent");
+
+        // 不給預算的 client 不受限:其他商品查詢本來就不計預算。
+        // A client built with no budget is unrestricted: the other contract lookups never counted anyway.
+        var unlimited = new ShioajiContractClient(host.Api);
+        var all = (await unlimited.ListAllContractsAsync(ShioajiSecurityType.Stock)).GetValueOrThrow();
+
+        Assert.HasCount(1010, all);
+    }
+
+    [TestMethod]
+    public async Task OtherContractLookups_StillDoNotTouchTheBudget()
+    {
+        using var server = new FakeShioajiHttpServer();
+        server.Map("GET", "/api/v1/data/contracts/2330", 200, Fixture.Read("contract_stk.json"));
+        using var host = ShioajiTestHost.Create(server, o =>
+        {
+            o.RateBudget.MarketQueryLimit = 1;
+            o.RateBudget.MaxWait = TimeSpan.Zero;
+        });
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.IsTrue((await host.Contracts.GetContractAsync("2330")).IsSuccess);
+        }
+    }
+
     [TestMethod]
     public async Task ListFutures_BuildsTheQuery_AndMapsAnArrayOrAWrappedList()
     {

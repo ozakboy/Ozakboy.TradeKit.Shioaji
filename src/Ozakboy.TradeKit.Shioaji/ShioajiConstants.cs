@@ -47,6 +47,31 @@ public static class ShioajiConstants
     public const int MaxCustomFieldLength = 6;
 
     /// <summary>
+    /// 1 分 K 單次查詢的最長天數(含頭尾兩天的日曆日數,官方限制 30 天)。
+    /// The longest span of one 1-minute-bar query in calendar days, both ends included (the broker's limit is 30
+    /// days).
+    /// </summary>
+    public const int MaxKbarRangeDays = 30;
+
+    /// <summary>
+    /// 單次快照查詢最多幾檔商品(官方限制 500)。
+    /// The most contracts one snapshot query may carry (the broker's limit is 500).
+    /// </summary>
+    public const int MaxSnapshotContracts = 500;
+
+    /// <summary>
+    /// 排行掃描一次最多回傳幾筆(官方範圍 0 到 200)。
+    /// The most rows one scanner query may ask for (the broker's range is 0 to 200).
+    /// </summary>
+    public const int MaxScannerCount = 200;
+
+    /// <summary>
+    /// 每日流量上限的重置時刻(台北時間的小時,08:00)。
+    /// The hour, in Taipei time, at which the daily traffic allowance resets (08:00).
+    /// </summary>
+    public const int TrafficResetHour = 8;
+
+    /// <summary>
     /// 台北時間相對於 UTC 的固定偏移(+08:00)。台灣自 1979 年起不實施日光節約時間,
     /// 所以沒有夏令時間的例外;Shioaji 的 <c>date</c>、<c>time</c>、<c>datetime</c> 都是這個時區的牆上時間。
     /// The fixed offset of Taipei time from UTC (+08:00). Taiwan has observed no daylight saving since 1979, so

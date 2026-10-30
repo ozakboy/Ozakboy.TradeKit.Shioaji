@@ -85,6 +85,16 @@ public sealed class ShioajiOptions
     public ShioajiRateBudgetOptions RateBudget { get; } = new();
 
     /// <summary>
+    /// 全市場日 OHLCV 的端點路徑,預設 <see cref="ShioajiApiPaths.DailyQuotes"/>。<b>預設路徑未驗證,待實機 OpenAPI 確認</b>
+    /// (文件只提到命令列的 <c>shioaji data daily-quotes</c>);對不上時用這個屬性改成 server <c>/docs</c> 上實際的路徑。
+    /// The endpoint path of the all-market daily OHLCV; <see cref="ShioajiApiPaths.DailyQuotes"/> by default.
+    /// <b>The default is unverified and awaits confirmation against a real server's OpenAPI</b> (the documentation
+    /// mentions only the command line's <c>shioaji data daily-quotes</c>); when it does not match, set the real path
+    /// from the server's <c>/docs</c> here.
+    /// </summary>
+    public string DailyQuotesPath { get; set; } = ShioajiApiPaths.DailyQuotes;
+
+    /// <summary>
     /// 是否「同時有金鑰與密鑰」。
     /// Whether both the key and the secret are present.
     /// </summary>
@@ -137,6 +147,11 @@ public sealed class ShioajiOptions
         if (StreamChannelCapacity < 1)
         {
             return ShioajiErrors.InvalidOptions("StreamChannelCapacity 必須至少為 1。StreamChannelCapacity must be at least 1.");
+        }
+
+        if (string.IsNullOrWhiteSpace(DailyQuotesPath) || !DailyQuotesPath.StartsWith('/'))
+        {
+            return ShioajiErrors.InvalidOptions("DailyQuotesPath 必須是以 / 開頭的路徑。DailyQuotesPath must be a path starting with /.");
         }
 
         return ReconnectBackoff.Validate().Then(RateBudget.Validate);

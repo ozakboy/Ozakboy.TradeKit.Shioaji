@@ -28,7 +28,8 @@ public sealed record FakeRequest(
 /// <param name="Status">狀態碼。The status code.</param>
 /// <param name="Body">回應本文。The response body.</param>
 /// <param name="ContentType">內容類型。The content type.</param>
-public sealed record FakeResponse(int Status, string Body, string ContentType = "application/json");
+/// <param name="Chunked">是否用分塊傳輸(不帶 Content-Length)。Whether to use chunked transfer, with no Content-Length.</param>
+public sealed record FakeResponse(int Status, string Body, string ContentType = "application/json", bool Chunked = false);
 
 /// <summary>
 /// 心跳的寫法。真 server 的心跳格式<b>尚未實測</b>(<c>docs/external/shioaji-http-api.md</c> §4 與 §9),所以兩種都能模擬。
@@ -206,6 +207,11 @@ public sealed class FakeSseConnection
 /// §7 沒有的帳務端點本替身也沒有。
 /// §4 subscription answer <c>{success, message, subscription}</c>; §2 accounts as an array with fields such as
 /// <c>account_type</c>; the account endpoints of §7 the package does not call are not here either.
+/// </description></item>
+/// <item><description>
+/// §5 歷史與查詢:<c>kbars</c> / <c>ticks</c> 的欄位陣列回應與其餘查詢端點的預設樣本,見 <c>MapHistoryDefaults</c>。
+/// §5 history and queries: the column-array answers of <c>kbars</c> and <c>ticks</c> and default samples for the
+/// other query endpoints, see <c>MapHistoryDefaults</c>.
 /// </description></item>
 /// <item><description>
 /// §1「設定 <c>SJ_HTTP_AUTH</c> 後要 <c>Authorization: Bearer &lt;key&gt;:&lt;secret&gt;</c>」:
@@ -566,6 +572,8 @@ public sealed class FakeShioajiHttpServer : IDisposable
             return new FakeResponse(200, "{}");
         });
 
+        MapHistoryDefaults();
+
         Map("POST", "/api/v1/stream/subscribe", request =>
         {
             RegisterSubscription(request.Body, add: true);
@@ -579,6 +587,59 @@ public sealed class FakeShioajiHttpServer : IDisposable
 
             return new FakeResponse(200, """{"success":true,"message":"unsubscribed","subscription":{}}""");
         });
+    }
+
+    /// <summary>
+    /// 歷史資料與查詢端點的預設回應,依 <c>docs/external/shioaji-http-api.md</c> §5。
+    /// <c>kbars</c> 與 <c>ticks</c> 是<b>欄位陣列</b>(§5 寫明 <c>{datetime[], Open[], High[], Low[], Close[], Volume[], Amount[]}</c>
+    /// 與 <c>datetime, close, volume, bid_price, bid_volume, ask_price, ask_volume, tick_type</c>);
+    /// 其餘端點的回應形狀文件沒寫,用物件陣列(Python SDK 的回傳型別)。
+    /// <c>daily_quotes</c> 的路徑與形狀文件都沒有,是本套件 0.2.0 的推定(見 <c>ShioajiApiPaths.DailyQuotes</c>)。
+    /// 這裡只放最小的樣本;逐欄位的情境用 <c>Fixtures</c> 目錄的檔案透過 <see cref="Map(string, string, int, string)"/> 覆蓋。
+    /// The default answers of the historical-data and query endpoints, from <c>docs/external/shioaji-http-api.md</c>
+    /// §5. <c>kbars</c> and <c>ticks</c> are <b>column arrays</b> (§5 spells out the columns); the other endpoints'
+    /// shapes are not documented, so arrays of objects (the Python SDK's return types) are used. The path and shape
+    /// of <c>daily_quotes</c> are in no document and are this package's 0.2.0 inference. Only minimal samples live
+    /// here; scenario-level detail overrides them with the files in <c>Fixtures</c> through
+    /// <see cref="Map(string, string, int, string)"/>.
+    /// </summary>
+    private void MapHistoryDefaults()
+    {
+        Map("POST", "/api/v1/data/kbars", _ => new FakeResponse(200, """
+            {"datetime":["2026-10-29T09:00:00","2026-10-29T09:01:00"],"Open":[1000,1001.5],"High":[1002,1003],"Low":[999.5,1001],"Close":[1001.5,1002],"Volume":[120,85],"Amount":[120180000,85170000]}
+            """));
+
+        Map("POST", "/api/v1/data/ticks", _ => new FakeResponse(200, """
+            {"datetime":["2026-10-29T09:00:00.123456","2026-10-29T09:00:01"],"close":[1000.5,1001],"volume":[3,1],"bid_price":[1000,1000.5],"bid_volume":[40,22],"ask_price":[1000.5,1001],"ask_volume":[18,30],"tick_type":[1,2]}
+            """));
+
+        Map("POST", "/api/v1/data/snapshots", _ => new FakeResponse(200, """
+            [{"ts":"2026-10-30T13:30:00","code":"2330","exchange":"TSE","close":1002,"volume":2,"total_volume":2000}]
+            """));
+
+        Map("POST", "/api/v1/data/daily_quotes", _ => new FakeResponse(200, """
+            [{"code":"2330","open":1000.5,"high":1005,"low":998.5,"close":1002,"volume":18000}]
+            """));
+
+        Map("POST", "/api/v1/data/scanner", _ => new FakeResponse(200, """
+            [{"code":"2330","name":"TSMC","close":1002,"change_rate":0.15}]
+            """));
+
+        Map("POST", "/api/v1/data/short_stock_sources", _ => new FakeResponse(200, """
+            [{"code":"2330","short_stock_source":1500}]
+            """));
+
+        Map("POST", "/api/v1/data/credit_enquire", _ => new FakeResponse(200, """
+            [{"stock_id":"2330","margin_unit":12000,"short_unit":300}]
+            """));
+
+        Map("GET", "/api/v1/data/regulatory_punish", _ => new FakeResponse(200, """
+            [{"code":"1234","name":"Sample A"}]
+            """));
+
+        Map("GET", "/api/v1/data/regulatory_notice", _ => new FakeResponse(200, """
+            [{"code":"5678","name":"Sample B"}]
+            """));
     }
 
     private void RegisterSubscription(string body, bool add)
@@ -745,7 +806,18 @@ public sealed class FakeShioajiHttpServer : IDisposable
         var bytes = Encoding.UTF8.GetBytes(fake.Body);
         response.StatusCode = fake.Status;
         response.ContentType = fake.ContentType;
-        response.ContentLength64 = bytes.Length;
+
+        // 分塊傳輸時沒有 Content-Length,用戶端只能數實際讀到的位元組(流量計的第二條路徑)。
+        // Chunked transfer has no Content-Length, so the client can only count the bytes it actually read (the
+        // second path of the traffic meter).
+        if (fake.Chunked)
+        {
+            response.SendChunked = true;
+        }
+        else
+        {
+            response.ContentLength64 = bytes.Length;
+        }
 
         await response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
         response.Close();

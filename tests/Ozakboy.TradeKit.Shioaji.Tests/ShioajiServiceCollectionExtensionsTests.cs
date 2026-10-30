@@ -3,6 +3,7 @@ using Ozakboy.Http;
 using Ozakboy.Security.Masking;
 using Ozakboy.TradeKit.Shioaji.Auth;
 using Ozakboy.TradeKit.Shioaji.Contracts;
+using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
 using Ozakboy.TradeKit.Shioaji.Server;
@@ -31,6 +32,8 @@ public sealed class ShioajiServiceCollectionExtensionsTests
             typeof(ShioajiOrderClient),
             typeof(ShioajiStreamReader),
             typeof(ShioajiRateBudget),
+            typeof(ShioajiTrafficMeter),
+            typeof(ShioajiHistoryClient),
         })
         {
             var first = host.Services.GetRequiredService(type);

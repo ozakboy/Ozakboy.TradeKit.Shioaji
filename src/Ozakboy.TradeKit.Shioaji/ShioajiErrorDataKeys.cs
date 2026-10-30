@@ -48,6 +48,12 @@ public static class ShioajiErrorDataKeys
     public const string Field = "field";
 
     /// <summary>
+    /// 欄位陣列回應裡出問題的那一列(從 0 起算的列號,數值字串)。
+    /// The zero-based row of a column-array response that could not be read, as a numeric string.
+    /// </summary>
+    public const string Row = "row";
+
+    /// <summary>
     /// 串流事件的名稱(<c>event:</c> 那一行)。
     /// The name of a stream event (the <c>event:</c> line).
     /// </summary>

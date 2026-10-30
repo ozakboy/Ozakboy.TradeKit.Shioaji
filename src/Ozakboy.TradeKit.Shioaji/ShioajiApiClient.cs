@@ -41,6 +41,7 @@ public sealed class ShioajiApiClient
 
     private readonly HttpPipelineClient _http;
     private readonly SecretMasker _masker;
+    private readonly ShioajiTrafficMeter? _trafficMeter;
 
     /// <summary>
     /// 建立低階用戶端。
@@ -53,15 +54,21 @@ public sealed class ShioajiApiClient
     /// The masker; pass the named client's own, or only secrets on <see cref="SecretMasker.Default"/> are
     /// recognised. <see cref="SecretMasker.Default"/> when <see langword="null"/>.
     /// </param>
+    /// <param name="trafficMeter">
+    /// 流量計;每個收到的回應(含非 2xx)的本文位元組都會記進去。<see langword="null"/> 表示不計流量。
+    /// The traffic meter; the body bytes of every response received, non-2xx included, are recorded in it.
+    /// <see langword="null"/> measures no traffic.
+    /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="http"/> 為 <see langword="null"/> 時擲出。Thrown when <paramref name="http"/> is <see langword="null"/>.
     /// </exception>
-    public ShioajiApiClient(HttpPipelineClient http, SecretMasker? masker = null)
+    public ShioajiApiClient(HttpPipelineClient http, SecretMasker? masker = null, ShioajiTrafficMeter? trafficMeter = null)
     {
         ArgumentNullException.ThrowIfNull(http);
 
         _http = http;
         _masker = masker ?? SecretMasker.Default;
+        _trafficMeter = trafficMeter;
     }
 
     /// <summary>
@@ -143,6 +150,21 @@ public sealed class ShioajiApiClient
     internal Task<Result<string>> PostStringAsync(string path, string? jsonBody, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Post, path, jsonBody, allowRetry: false, cancellationToken);
 
+    /// <summary>
+    /// 送出 GET,回傳原始回應本文與它的位元組數。歷史資料的回應要帶著大小回給呼叫端,讓它知道這一筆吃了多少流量。
+    /// Sends a GET and returns the raw response body with its byte count. A historical-data answer carries its size
+    /// back to the caller so it knows how much traffic that one cost.
+    /// </summary>
+    internal Task<Result<ShioajiResponseBody>> GetBodyAsync(string path, CancellationToken cancellationToken) =>
+        SendBodyAsync(HttpMethod.Get, path, jsonBody: null, allowRetry: true, cancellationToken);
+
+    /// <summary>
+    /// 送出 POST(<b>永不重試</b>),回傳原始回應本文與它的位元組數。
+    /// Sends a POST (<b>never retried</b>) and returns the raw response body with its byte count.
+    /// </summary>
+    internal Task<Result<ShioajiResponseBody>> PostBodyAsync(string path, string? jsonBody, CancellationToken cancellationToken) =>
+        SendBodyAsync(HttpMethod.Post, path, jsonBody, allowRetry: false, cancellationToken);
+
     private static string? Serialize(object? body) =>
         body is null ? null : JsonSerializer.Serialize(body, ShioajiJson.Options);
 
@@ -170,6 +192,18 @@ public sealed class ShioajiApiClient
     }
 
     private async Task<Result<string>> SendAsync(
+        HttpMethod method,
+        string path,
+        string? jsonBody,
+        bool allowRetry,
+        CancellationToken cancellationToken)
+    {
+        var body = await SendBodyAsync(method, path, jsonBody, allowRetry, cancellationToken).ConfigureAwait(false);
+
+        return body.Map(static value => value.Text);
+    }
+
+    private async Task<Result<ShioajiResponseBody>> SendBodyAsync(
         HttpMethod method,
         string path,
         string? jsonBody,
@@ -232,9 +266,15 @@ public sealed class ShioajiApiClient
                 return ShioajiErrors.RequestCancelled(path);
             }
 
+            // 流量是「收到多少」:Content-Length 優先,沒有(chunked)就用實際讀到的 UTF-8 位元組數。非 2xx 的回應也算。
+            // Traffic is "how much arrived": Content-Length first, and the UTF-8 bytes actually read when there is
+            // none (chunked). A non-2xx response counts too.
+            var bytes = response.Content.Headers.ContentLength ?? Encoding.UTF8.GetByteCount(text);
+            _trafficMeter?.Record(bytes);
+
             if (response.IsSuccessStatusCode)
             {
-                return text;
+                return new ShioajiResponseBody(text, bytes);
             }
 
             var masked = _masker.MaskText(text) ?? string.Empty;
