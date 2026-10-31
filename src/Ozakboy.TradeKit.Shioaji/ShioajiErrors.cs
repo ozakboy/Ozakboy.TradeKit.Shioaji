@@ -141,13 +141,17 @@ internal static class ShioajiErrors
             ErrorCategory.Exhausted);
 
     /// <summary>
-    /// 在下單類請求的失敗上標記「結果未知」。逾時與 5xx 才標:連線被拒代表請求沒到達,不是未知。
-    /// Flags an order-type failure as having an unknown outcome. Only timeouts and 5xx answers: a refused
-    /// connection means the request never arrived, which is not unknown.
+    /// 在下單類請求的失敗上標記「結果未知」:逾時、5xx 與所有網路錯誤。網路錯誤分不出「連線被拒(沒送到)」與
+    /// 「送出後連線被重設」或「收到 2xx 後讀回應時斷線(已送到)」,寧可當成未知交給查單,也不能讓呼叫端以為沒送出而重送。
+    /// Flags an order-type failure as having an unknown outcome: timeouts, 5xx answers and every network error. A network
+    /// error cannot tell "connection refused (never arrived)" from "reset after sending" or "dropped while reading a 2xx
+    /// answer (arrived)", so it is treated as unknown and left to a lookup rather than letting the caller think nothing
+    /// was sent and send it again.
     /// </summary>
     public static Error WithOutcomeFlag(Error error)
     {
         var unknown = string.Equals(error.Code, ShioajiErrorCodes.RequestTimeout, StringComparison.Ordinal)
+            || string.Equals(error.Code, ShioajiErrorCodes.ServerUnreachable, StringComparison.Ordinal)
             || (error.TryGetInt64(ShioajiErrorDataKeys.StatusCode, out var status) && status >= 500);
 
         return unknown ? error.WithData(ShioajiErrorDataKeys.OutcomeUnknown, true) : error;

@@ -1,0 +1,2 @@
+[{"id":5,"code":"2330","direction":"Action.Sell","quantity":"3","price":"29.8","last_price":29.85,"pnl":-150.5,"yd_quantity":3,"cond":"StockOrderCond.MarginTrading","margin_purchase_amount":"50000","collateral":12000,"short_sale_margin":0,"interest":12.5},
+{"code":"2317","direction":"Buy","quantity":1,"cond":"Netting","unlisted_extra":"x"}]

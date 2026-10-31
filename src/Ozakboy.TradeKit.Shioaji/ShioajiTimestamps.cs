@@ -97,6 +97,30 @@ internal static partial class ShioajiTimestamps
     }
 
     /// <summary>
+    /// 讀一個交易日的日曆日期:接受 <c>yyyy-MM-dd</c>、<c>yyyy/MM/dd</c>、<c>yyyyMMdd</c>,後面跟著時間
+    /// (以空白或 <c>T</c> 隔開)時只取日期那一段、原樣照寫,不做時區換算。交易日是台北的日曆日,換成 UTC 會讓午夜前後的日期錯一天。
+    /// Reads the calendar date of a trading day: <c>yyyy-MM-dd</c>, <c>yyyy/MM/dd</c> and <c>yyyyMMdd</c> are accepted,
+    /// and when a time follows (separated by a space or <c>T</c>) only the date part is taken, as written, with no
+    /// time-zone conversion. A trading day is a Taipei calendar day, and converting to UTC would shift dates around
+    /// midnight by a day.
+    /// </summary>
+    public static bool TryReadDate(string? text, out DateOnly date)
+    {
+        date = default;
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.Trim();
+        var cut = trimmed.IndexOfAny([' ', 'T']);
+        var datePart = cut > 0 ? trimmed[..cut] : trimmed;
+
+        return DateOnly.TryParseExact(datePart, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+    }
+
+    /// <summary>
     /// 解析 <c>datetime</c> 字串。
     /// Parses a <c>datetime</c> string.
     /// </summary>

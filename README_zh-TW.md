@@ -17,6 +17,8 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 > **目前狀態:**已在永豐的**模擬環境**以有效憑證實測過登入、帳號、委託回報訂閱(證券與期貨)、商品列表與詳細資料、
 > 1 分 K、整日逐筆與用量查詢(結果見「官方 server 的已知行為」)。行情串流的事件欄位、下單與委託回報的回應形狀、
 > 以及其他歷史端點仍照文件推定,全部列在「限制與未實測事項」;**其中全市場日 OHLCV 的路徑與回應形狀尤其未驗證。**
+> **0.3.0 新增的帳務查詢(庫存、已實現損益、交割款、交易額度、期貨保證金、銀行餘額)目前只對本機假伺服器驗證過,
+> 尚未對真的 `shioaji server` 實測,回應形狀是依文件的欄位清單推定的。**
 > **上實盤之前請先讀那一段。**
 
 ## 這一版做了什麼
@@ -39,7 +41,8 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 | 下單(股票與期貨)、改價、改量、撤單、列出委託;下單類請求永不重試 | 已完成 |
 | 本地限流預算:行情查詢、帳務、委託、訂閱上限 | 已完成 |
 | 與 `TradeKit.Abstractions` 的中立介面對映(`IExchangeClient` 等) | 未做 —— 見「未來」 |
-| 帳務(`portfolio`)、組合單、預收 | 未做 —— 見「未來」 |
+| 帳務查詢(`ShioajiPortfolioClient`,0.3.0):證券與期貨庫存及明細、已實現損益(含明細與彙總)、交割款、交易額度、期貨保證金、銀行餘額 | 已完成,但**只對本機假伺服器驗證過,尚未對真 server 實測**;回應形狀是推定的 |
+| 組合單、預收 | 未做 —— 見「未來」 |
 
 所有價格與數量都是 `decimal`,所有時間都是 UTC `DateTimeOffset`。預期的失敗一律回傳 `Result` / `Result<T>`,
 錯誤碼一律 `shioaji.` 開頭,集中在 `ShioajiErrorCodes`,每一個都附中英說明。
@@ -248,6 +251,75 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
   非 2xx 也算;不含 SSE 串流與請求本文)。按台北流量日分桶,每日 08:00(= UTC 00:00)重置,公開 `TodayBytes`、`Reset()`、`Snapshot()`。
   **它是估計值**:券商自己的數字以 `GetUsageAsync` 為準,每次查到都會寫進流量計的 `ServerReportedBytes`。
 
+### 帳務查詢(0.3.0)
+
+> **尚未對真 server 實測。**下面這些端點只對本機假伺服器測過,假伺服器的行為依官方文件的帳務章節。那一章列了每個端點的請求欄位與
+> 回應欄位,但沒有逐字的回應(只有 `settlements` 與 `account_balance` 有範例),所以回應的形狀是推定的。請先在模擬環境把每個呼叫各跑一次,
+> 對照你帳戶的實際內容再依賴它。模擬環境的帳務數字是示範資料。
+
+```csharp
+// 唯讀查詢;每個呼叫在本地檢查之後佔一個 Portfolio 額度(5 秒 25 次)。
+// account 參數預設 null,表示用 server 的預設帳號。
+var portfolio = provider.GetRequiredService<ShioajiPortfolioClient>();
+
+// 證券庫存與未實現損益(預設整股;零股傳 ShioajiPositionUnit.Share)。
+var positions = await portfolio.ListStockPositionsAsync(cancellationToken: cancellationToken);
+
+if (positions.IsSuccess)
+{
+    foreach (var position in positions.GetValueOrThrow())
+    {
+        Console.WriteLine($"{position.Code} {position.Direction} x{position.Quantity} cost {position.Price} pnl {position.Pnl}");
+    }
+}
+
+// 某個日期區間的已實現損益,再查其中一列的明細;明細會說明它是不是當沖。
+var realized = await portfolio.ListStockProfitLossAsync(
+    new DateOnly(2026, 10, 1),
+    new DateOnly(2026, 10, 31),
+    cancellationToken: cancellationToken);
+
+if (realized.IsSuccess && realized.GetValueOrThrow() is [{ Id: { } id }, ..])
+{
+    var details = await portfolio.ListStockProfitLossDetailsAsync(id, cancellationToken: cancellationToken);
+
+    foreach (var detail in details.GetValueOrThrow())
+    {
+        Console.WriteLine($"{detail.Code} {detail.TradeType} fee {detail.Fee} tax {detail.Tax}");
+    }
+}
+
+var settlements = await portfolio.ListSettlementsAsync(cancellationToken: cancellationToken);
+
+foreach (var settlement in settlements.GetValueOrThrow())
+{
+    Console.WriteLine($"T+{settlement.TPlus} {settlement.Date:yyyy-MM-dd} {settlement.Amount}");
+}
+
+// 文件寫交易額度在交易日 08:30 至 15:00 才查得到。
+var limits = await portfolio.GetTradingLimitsAsync(cancellationToken: cancellationToken);
+Console.WriteLine($"available {limits.GetValueOrThrow().TradingAvailable}");
+```
+
+這段範例有對應的測試逐行照抄,對著假伺服器跑,保證能編譯執行。
+
+- **方法。**證券與期貨的回應欄位不同,所以各有一組方法:`ListStockPositionsAsync` / `ListFuturesPositionsAsync`(`position_unit`)、
+  `ListStockPositionDetailsAsync` / `ListFuturesPositionDetailsAsync`(`position_detail`)、`ListStockProfitLossAsync` /
+  `ListFuturesProfitLossAsync`(`profit_loss`)、`ListStockProfitLossDetailsAsync` / `ListFuturesProfitLossDetailsAsync`
+  (`profit_loss_detail`)、`GetStockProfitLossSummaryAsync` / `GetFuturesProfitLossSummaryAsync`(`profitloss_sum`),
+  以及只有單一帳號類型的 `ListSettlementsAsync`、`GetTradingLimitsAsync`、`GetAccountBalanceAsync`(證券)與 `GetMarginAsync`(期貨)。
+  明細方法吃的是前一個呼叫回來的 `Id`。
+- **本地檢查先做、而且不花任何額度。**起始日晚於結束日,或只給了 `BrokerId` 沒給 `AccountId`(反之亦然),回
+  `shioaji.validation.invalid_argument`;不送出請求、不佔預算。
+- **文件沒保證會有的欄位是可空型別,絕不補 0。**只有一列的識別欄位缺漏或讀不懂時整筆失敗(代碼與數量,或交割款的日期、金額與 `T`);
+  其餘欄位缺漏一律是 `null`,列舉讀成 `Unknown`。金額、價格、數量、損益都是由原始 JSON 文字讀成的 `decimal`,
+  不論 server 寫 `29.8` 還是 `"29.8"`。
+- **日期是台北的日曆日**(`DateOnly`),照寫的日子取。銀行餘額的 `QueriedAt` 帶有時間,依一般規則(不帶時區視為台北牆上時間,轉成 UTC)。
+- **接受的回應形狀。**因為形狀是推定的,每個列表端點收裸物件陣列、包著陣列的物件(`items`、`data`、`results`、`list`、`rows`),
+  以及 Python SDK 那種欄位陣列物件;單一物件端點收一個物件、只有一個物件的陣列、以及只有一列的欄位陣列。空回應是成功的空清單。
+- **銀行餘額把自己的錯誤放在回應裡。**文件寫只支援永豐銀行、分戶帳與 LINE Bank;其他銀行預期是 200 加上 `errmsg` 的訊息,
+  會落在 `ShioajiAccountBalance.ErrorMessage`,餘額是 `null`。
+
 ## 幾個值得知道的設計決定
 
 ### 為什麼走官方 server,而不是自己寫 sidecar 或用社群套件
@@ -294,7 +366,7 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
 | 類別 | 上限 | 目前計入的呼叫 |
 | --- | --- | --- |
 | `MarketQuery` | 10 秒 50 次 | `ShioajiHistoryClient` 的每一次呼叫;`ListAllContractsAsync` 的每一頁 |
-| `Portfolio` | 5 秒 25 次 | `GetUsageAsync`;`ListTradesAsync(refresh: true)` |
+| `Portfolio` | 5 秒 25 次 | `ShioajiPortfolioClient` 的每個呼叫(0.3.0);`GetUsageAsync`;`ListTradesAsync(refresh: true)` |
 | `Order` | 10 秒 250 次 | 下單、改價、改量、撤單;`ListTradesAsync(refresh: false)` |
 | `Subscription` | 同時 200 個 | `SubscribeAsync` +1,`UnsubscribeAsync` −1;重複訂同一筆不重複計,請求失敗會把剛計入的還回去 |
 
@@ -442,6 +514,12 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
   `credit_enquire` 與兩個監管清單讀成「物件陣列」(或包著陣列的物件;監管清單另收欄位陣列物件,Python SDK 就是這樣回的);
   欄位名取自 Python SDK,**未在 HTTP 上驗證**,沒有對映成屬性的內容都留在每一筆的 `Raw`。`short_stock_sources` 與 `credit_enquire`
   的請求 body(`{contracts: [...]}`)是比照 `snapshots` 推定的。
+- **帳務查詢的回應形狀與部分欄位意義(0.3.0)。**文件列了每個帳務端點的請求欄位與回應欄位,但只有 `settlements` 與
+  `account_balance` 有逐字範例,`trading_limits` 的範例還被截斷。所以接受的形狀(裸陣列、包著陣列的物件、欄位陣列)是推定的,
+  下面這些也是:同一個路徑是否依你送的 `account_type` 回證券或期貨的欄位集(假設如此)、期貨查詢可以不帶 `unit`(假設如此,
+  證券查詢會帶)、`settlements` 的 `amount` 正負號的意義、`pr_ratio` 與 `risk_indicator` 的單位,以及某一列的 `detail_id` 是什麼
+  (取自上一個呼叫的 `Id`)。沒有任何一項對真 server 跑過,所以都未確認。猜錯時會表現成 `shioaji.response.malformed`、
+  `shioaji.response.missing_field`(帶欄位名)或欄位是 `null`,絕不會變成 0。
 - **流量用完時「空值」長什麼樣。**文件只說行情查詢回「空值」,沒說那是什麼。空本文、`null`、`[]`、`{}`、欄位全是 `null`、欄位全是空陣列
   一律讀成空頁;若 server 用別的方式回應(例如錯誤本文),就會以那個錯誤浮現。
 - **epoch 型的 `datetime`(0.2.0)。**數字型的 `datetime` 視為真正的 Unix epoch(UTC)。已知 Python SDK 的奈秒 `ts` 是把台北牆上時間當成 UTC 寫的;
@@ -459,7 +537,7 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
 這一版刻意不做、但會在後續版本補上的:
 
 - 實作 `TradeKit.Abstractions` 的中立介面:`IExchangeClient`、`IMarketDataFeed`、`IUserDataFeed`。
-- 帳務(`portfolio`):部位、損益、交割、保證金、交易額度。
+- 把帳務查詢(0.3.0)對真 server 確認過,並以錄到的回應取代推定的回應形狀。
 - 用程式碼強制「盤中禁止拿歷史端點當即時報價」(0.2.0 只在文件寫明這條規則、交給呼叫端決定;要強制需要交易日曆)。
 - 組合單、預收款項 / 預收股票、`watchlist`。
 - 加值串流(`calculated_index`、`index_components`、`kbar`、`scanner`):目前它們會以 `ShioajiUnknownEvent` 原樣送出。

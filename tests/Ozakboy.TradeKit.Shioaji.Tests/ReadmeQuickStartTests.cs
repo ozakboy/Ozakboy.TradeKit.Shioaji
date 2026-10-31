@@ -4,6 +4,7 @@ using Ozakboy.TradeKit.Shioaji.Contracts;
 using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
+using Ozakboy.TradeKit.Shioaji.Portfolio;
 using Ozakboy.TradeKit.Shioaji.Server;
 using Ozakboy.TradeKit.Shioaji.Streaming;
 using Ozakboy.TradeKit.Shioaji.Tests.Support;
@@ -233,5 +234,68 @@ public sealed class ReadmeQuickStartTests
         Assert.Contains("O1000 H1002 L999.5 C1001.5 V120", output[0]);
         Assert.IsTrue(traffic.Bytes > 0, "both responses were counted");
         Assert.HasCount(3, output);
+    }
+
+    /// <summary>
+    /// README「帳務查詢」那一段,逐行照抄。
+    /// The README section "Portfolio queries", copied line by line.
+    /// </summary>
+    [TestMethod]
+    public async Task ThePortfolioExample_ReadsPositionsProfitAndLossSettlementsAndLimits()
+    {
+        using var server = new FakeShioajiHttpServer();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddShioaji(options => options.BaseUri = server.BaseUri);
+        await using var provider = services.BuildServiceProvider();
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var cancellationToken = cancellation.Token;
+        var output = new List<string>();
+
+        // ───────────────────────── README 開始 / README begins ─────────────────────────
+        var portfolio = provider.GetRequiredService<ShioajiPortfolioClient>();
+
+        var positions = await portfolio.ListStockPositionsAsync(cancellationToken: cancellationToken);
+
+        if (positions.IsSuccess)
+        {
+            foreach (var position in positions.GetValueOrThrow())
+            {
+                output.Add($"{position.Code} {position.Direction} x{position.Quantity} cost {position.Price} pnl {position.Pnl}"); // README: Console.WriteLine
+            }
+        }
+
+        var realized = await portfolio.ListStockProfitLossAsync(
+            new DateOnly(2026, 10, 1),
+            new DateOnly(2026, 10, 31),
+            cancellationToken: cancellationToken);
+
+        if (realized.IsSuccess && realized.GetValueOrThrow() is [{ Id: { } id }, ..])
+        {
+            var details = await portfolio.ListStockProfitLossDetailsAsync(id, cancellationToken: cancellationToken);
+
+            foreach (var detail in details.GetValueOrThrow())
+            {
+                output.Add($"{detail.Code} {detail.TradeType} fee {detail.Fee} tax {detail.Tax}"); // README: Console.WriteLine
+            }
+        }
+
+        var settlements = await portfolio.ListSettlementsAsync(cancellationToken: cancellationToken);
+
+        foreach (var settlement in settlements.GetValueOrThrow())
+        {
+            output.Add($"T+{settlement.TPlus} {settlement.Date:yyyy-MM-dd} {settlement.Amount}"); // README: Console.WriteLine
+        }
+
+        var limits = await portfolio.GetTradingLimitsAsync(cancellationToken: cancellationToken);
+        output.Add($"available {limits.GetValueOrThrow().TradingAvailable}"); // README: Console.WriteLine
+        // ───────────────────────── README 結束 / README ends ─────────────────────────
+
+        Assert.Contains("2330 Buy x2 cost 600.5 pnl 18999", output[0]);
+        Assert.Contains("DayTrade", output[1]);
+        Assert.Contains("T+0 2026-05-21 100000", output[2]);
+        Assert.Contains("available 3800000", output[^1]);
+        Assert.HasCount(5, output);
     }
 }

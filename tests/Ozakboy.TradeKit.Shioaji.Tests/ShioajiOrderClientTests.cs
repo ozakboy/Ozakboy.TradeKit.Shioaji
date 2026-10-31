@@ -262,7 +262,7 @@ public sealed class ShioajiOrderClientTests
     }
 
     [TestMethod]
-    public async Task ARefusedConnection_IsNotFlaggedUnknown_BecauseTheRequestNeverArrived()
+    public async Task ANetworkError_IsFlaggedUnknown_BecauseARefusalCannotBeToldFromAResetAfterSending()
     {
         using var server = new FakeShioajiHttpServer();
         using var host = ShioajiTestHost.Create(server, o =>
@@ -271,10 +271,12 @@ public sealed class ShioajiOrderClientTests
             o.RequestTimeout = TimeSpan.FromSeconds(8);
         });
 
-        var result = await host.Orders.PlaceStockOrderAsync(Stock());
+        var placed = await host.Orders.PlaceStockOrderAsync(Stock());
+        var cancelled = await host.Orders.CancelOrderAsync("abc123");
 
-        Assert.AreEqual(ShioajiErrorCodes.ServerUnreachable, result.Error!.Code);
-        Assert.IsFalse(result.Error.Data!.ContainsKey(ShioajiErrorDataKeys.OutcomeUnknown));
+        Assert.AreEqual(ShioajiErrorCodes.ServerUnreachable, placed.Error!.Code);
+        Assert.AreEqual("true", placed.Error.Data![ShioajiErrorDataKeys.OutcomeUnknown]);
+        Assert.AreEqual("true", cancelled.Error!.Data![ShioajiErrorDataKeys.OutcomeUnknown]);
     }
 
     [TestMethod]

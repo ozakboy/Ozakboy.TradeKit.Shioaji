@@ -20,7 +20,10 @@ package name; every dependency here complies, see "Dependency policy" at the end
 > **simulation** environment (results in "Known server behaviour"). The market-data event fields, the order and
 > order-report response shapes, and the other history endpoints still follow the documentation and are listed in
 > "Limits and unmeasured behaviour"; **the path and the response shape of the all-market daily OHLCV in particular
-> are unverified.** **Read that section before going live.**
+> are unverified.** **The portfolio queries added in 0.3.0 (positions, realized profit and loss, settlements, trading
+> limits, futures margin, bank balance) have so far been checked only against the local fake server, not against a real
+> `shioaji server`, and their response shapes are inferred from the documentation's field lists.** **Read that section
+> before going live.**
 
 ## What this release does
 
@@ -42,7 +45,8 @@ package name; every dependency here complies, see "Dependency policy" at the end
 | Placing orders (stocks and futures), repricing, resizing, cancelling, listing; order requests never retried | Done |
 | Local rate budget: market queries, account queries, orders, the subscription ceiling | Done |
 | Mapping to the neutral `TradeKit.Abstractions` interfaces (`IExchangeClient` and so on) | Not yet; see "Future" |
-| Account data (`portfolio`), combo orders, earmarking | Not yet; see "Future" |
+| Portfolio queries (`ShioajiPortfolioClient`, 0.3.0): stock and futures positions and their details, realized profit and loss with details and a summary, settlements, trading limits, futures margin, bank balance | Done, but **only checked against the local fake server, not yet against a real server**; the response shapes are inferred |
+| Combo orders, earmarking | Not yet; see "Future" |
 
 Every price and quantity is a `decimal` and every time is a UTC `DateTimeOffset`. Expected failures are always
 `Result` / `Result<T>`, with codes starting with `shioaji.` that live in `ShioajiErrorCodes`, each documented in
@@ -264,6 +268,84 @@ warning about it under "Limits and unmeasured behaviour" first.
   `Snapshot()`. **It is an estimate**: the broker's own number is what `GetUsageAsync` reports, and each such answer
   is written to the meter's `ServerReportedBytes`.
 
+### Portfolio queries (0.3.0)
+
+> **Not yet run against a real server.** The endpoints below are tested only against the local fake server, which follows
+> the portfolio chapter of the official documentation. That chapter lists the request fields and the response fields of
+> every endpoint but gives no verbatim response (only `settlements` and `account_balance` have an example), so the shape
+> of a response is inferred. Try each call once in the simulation environment and compare the result with your account
+> before relying on it. In the simulation environment the portfolio numbers are demonstration data.
+
+```csharp
+// Read-only queries; each call takes one Portfolio budget unit (25 per 5 seconds) after its local checks.
+// The account parameter defaults to null, which means the server's default account.
+var portfolio = provider.GetRequiredService<ShioajiPortfolioClient>();
+
+// Stock positions with unrealized profit and loss (round lots by default; ShioajiPositionUnit.Share for odd lots).
+var positions = await portfolio.ListStockPositionsAsync(cancellationToken: cancellationToken);
+
+if (positions.IsSuccess)
+{
+    foreach (var position in positions.GetValueOrThrow())
+    {
+        Console.WriteLine($"{position.Code} {position.Direction} x{position.Quantity} cost {position.Price} pnl {position.Pnl}");
+    }
+}
+
+// Realized profit and loss for a date range, then the detail of one row; a detail says whether it was a day trade.
+var realized = await portfolio.ListStockProfitLossAsync(
+    new DateOnly(2026, 10, 1),
+    new DateOnly(2026, 10, 31),
+    cancellationToken: cancellationToken);
+
+if (realized.IsSuccess && realized.GetValueOrThrow() is [{ Id: { } id }, ..])
+{
+    var details = await portfolio.ListStockProfitLossDetailsAsync(id, cancellationToken: cancellationToken);
+
+    foreach (var detail in details.GetValueOrThrow())
+    {
+        Console.WriteLine($"{detail.Code} {detail.TradeType} fee {detail.Fee} tax {detail.Tax}");
+    }
+}
+
+var settlements = await portfolio.ListSettlementsAsync(cancellationToken: cancellationToken);
+
+foreach (var settlement in settlements.GetValueOrThrow())
+{
+    Console.WriteLine($"T+{settlement.TPlus} {settlement.Date:yyyy-MM-dd} {settlement.Amount}");
+}
+
+// The documentation says trading limits can be queried 08:30 to 15:00 on trading days.
+var limits = await portfolio.GetTradingLimitsAsync(cancellationToken: cancellationToken);
+Console.WriteLine($"available {limits.GetValueOrThrow().TradingAvailable}");
+```
+
+A test copies this example line by line, so it compiles and runs against the fake server.
+
+- **Methods.** Stock and futures have separate methods because their response fields differ: `ListStockPositionsAsync` /
+  `ListFuturesPositionsAsync` (`position_unit`), `ListStockPositionDetailsAsync` / `ListFuturesPositionDetailsAsync`
+  (`position_detail`), `ListStockProfitLossAsync` / `ListFuturesProfitLossAsync` (`profit_loss`),
+  `ListStockProfitLossDetailsAsync` / `ListFuturesProfitLossDetailsAsync` (`profit_loss_detail`),
+  `GetStockProfitLossSummaryAsync` / `GetFuturesProfitLossSummaryAsync` (`profitloss_sum`), and the single-account-type
+  `ListSettlementsAsync`, `GetTradingLimitsAsync`, `GetAccountBalanceAsync` (securities) and `GetMarginAsync` (futures).
+  The position and profit-and-loss ids (`Id`) are what the detail methods take.
+- **Local checks come first and cost nothing.** A start date after the end date, or a `BrokerId` given without an
+  `AccountId` (or the other way round), is `shioaji.validation.invalid_argument`; nothing is sent and no budget unit is
+  taken.
+- **A field the documentation does not promise is nullable and is never filled with zero.** A row fails only when its
+  identifying fields are missing or unreadable (the code and quantity, or a settlement's date, amount and `T`); every
+  other missing field is `null`, and an enum reads as `Unknown`. Money, prices, quantities and profit and loss are
+  `decimal` read from raw JSON text, whether the server writes `29.8` or `"29.8"`.
+- **Dates are Taipei calendar days** (`DateOnly`), taken as written. The bank balance's `QueriedAt` carries a time of day
+  and follows the usual rule (no offset means Taipei wall-clock time, converted to UTC).
+- **Accepted response shapes.** Because the shape is inferred, each list endpoint accepts a bare array of objects, an
+  object wrapping the array (`items`, `data`, `results`, `list`, `rows`), and the column-array object of the Python SDK;
+  the single-object endpoints accept an object, an array holding one object, and a column array of one row. An empty
+  answer is a successful empty list.
+- **The bank balance reports its own errors in band.** The documentation says only SinoPac Bank, sub-accounts and LINE
+  Bank are supported; another bank is expected to answer 200 with a message in `errmsg`, which lands in
+  `ShioajiAccountBalance.ErrorMessage` with a `null` balance.
+
 ## Design decisions worth knowing
 
 ### Why the official server, rather than a home-grown sidecar or a community package
@@ -321,7 +403,7 @@ immediately that this one was not sent.
 | Category | Ceiling | Calls counted today |
 | --- | --- | --- |
 | `MarketQuery` | 50 per 10 s | every `ShioajiHistoryClient` call; each page of `ListAllContractsAsync` |
-| `Portfolio` | 25 per 5 s | `GetUsageAsync`; `ListTradesAsync(refresh: true)` |
+| `Portfolio` | 25 per 5 s | every `ShioajiPortfolioClient` call (0.3.0); `GetUsageAsync`; `ListTradesAsync(refresh: true)` |
 | `Order` | 250 per 10 s | place, reprice, resize, cancel; `ListTradesAsync(refresh: false)` |
 | `Subscription` | 200 at once | `SubscribeAsync` +1, `UnsubscribeAsync` −1; a repeat is not counted twice, a failed request returns the unit it took |
 
@@ -507,6 +589,15 @@ item against the log:
   object, which is how the Python SDK returns them); their field names come from the Python SDK and are unverified
   over HTTP, and everything not mapped stays in each item's `Raw`. The request bodies of `short_stock_sources` and
   `credit_enquire` (`{contracts: [...]}`) are inferred from `snapshots`.
+- **The portfolio queries (0.3.0): response shapes and some field meanings.** The documentation lists the request and
+  response fields of every portfolio endpoint but has a verbatim example for only `settlements` and `account_balance`,
+  and its `trading_limits` example is cut short. The accepted shapes (bare array, wrapped array, column arrays) are
+  therefore inferences, and so are: whether one path answers the stock or the futures field set according to the
+  `account_type` you send (assumed), that a futures query may omit `unit`
+  (assumed; the stock queries send it), the meaning of the sign of a settlement `amount`, the unit of `pr_ratio` and
+  `risk_indicator`, and what `detail_id` is for a given row (the `Id` of the previous call). Nothing has run against a
+  real server, so none of it is confirmed. A wrong guess surfaces as `shioaji.response.malformed` or
+  `shioaji.response.missing_field` (with the field name), or as a `null` field, and never as a zero.
 - **What an exhausted traffic allowance looks like.** The documentation says market queries answer with "empty
   values" and not what that is. An empty body, `null`, `[]`, `{}`, all-null columns and all-empty columns are all read
   as an empty page; if the server answers some other way (an error body, say), it surfaces as that error instead.
@@ -531,7 +622,8 @@ Deliberately not in this release, planned for later ones:
 
 - Implementing the neutral `TradeKit.Abstractions` interfaces: `IExchangeClient`, `IMarketDataFeed`,
   `IUserDataFeed`.
-- Account data (`portfolio`): positions, profit and loss, settlements, margin, trading limits.
+- Confirming the portfolio queries (0.3.0) against a real server and replacing the inferred response shapes with
+  recorded ones.
 - Enforcing "no live quotes from historical endpoints during trading hours" in code (0.2.0 documents the rule and
   leaves the decision to the caller; it needs a trading calendar to enforce).
 - Combo orders, earmarking, `watchlist`.

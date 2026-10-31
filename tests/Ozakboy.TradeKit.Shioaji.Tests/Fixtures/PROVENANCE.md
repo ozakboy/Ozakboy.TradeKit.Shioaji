@@ -64,6 +64,26 @@ the response, so the shapes are inferred from the Python SDK's return types.
 `MapHistoryDefaults` in `Support/FakeShioajiHttpServer.cs` also holds a minimal default answer for each historical endpoint
 (in code, not in files), from the same sources.
 
+### 0.3.0 新增:帳務查詢 / Added in 0.3.0: portfolio queries
+
+同樣**沒有任何一份是從真 server 錄製的**。文件的帳務章節給了每個端點的欄位表,但只有 `settlements` 與 `account_balance` 有範例 JSON,
+所以下面的**回應外形(裸陣列、包著陣列的物件、欄位陣列)都是推定的**,三種形狀各用一份檔證明都收。
+Likewise **none of these was recorded from a real server**. The portfolio chapter of the documentation gives a field table for
+every endpoint but example JSON only for `settlements` and `account_balance`, so the **response shapes below (a bare array, an
+object wrapping an array, column arrays) are inferences**, with one file each to prove all three are accepted.
+
+| 檔案 / File | 對應 / Models | 建構依據 / Built from | 刻意放進去的陷阱 / Deliberate traps |
+| --- | --- | --- | --- |
+| `portfolio_positions_stock.json` | `POST /portfolio/position_unit`(證券 / stock) | 文件 `StockPosition` 欄位表;裸物件陣列(推定) / the documentation's `StockPosition` table; a bare array of objects (inferred) | 第一筆 `direction`、`cond` 帶型別前綴(`Action.Sell`、`StockOrderCond.MarginTrading`);`quantity`、`price`、`margin_purchase_amount` 是字串型數字;`price` 為 `29.8`(證明不經 `double`);第二筆沒有 `id`、價格與損益(必須是 `null`,不是 0),`cond` 是 `Netting`,多一個沒對映的欄位 / the first entry's `direction` and `cond` carry a type prefix; `quantity`, `price` and `margin_purchase_amount` are string-typed numbers; the second has no `id`, price or pnl, which must read as `null` and not zero |
+| `portfolio_positions_stock_columnar.json` | 同上 / same | 同上,但是欄位陣列物件(Python SDK 風格,推定) / same, as a column-array object (Python SDK style, inferred) | `quantity`、`price` 混用數字與字串;`last_price` 第二格是 `null` / numbers and strings mixed; a `null` cell |
+| `portfolio_profit_loss_stock_wrapped.json` | `POST /portfolio/profit_loss`(證券 / stock) | 文件 `StockProfitLoss` 欄位表;包在 `items` 裡(推定) / the `StockProfitLoss` table; wrapped in `items` (inferred) | 第二筆 `date` 是 `20261029`、`pnl` 是字串型負數、`cond` 是 `Emerging` / the second entry's `date` is `20261029`, `pnl` a string-typed negative, `cond` `Emerging` |
+| `portfolio_profitloss_sum_stock.json` | `POST /portfolio/profitloss_sum`(證券 / stock) | 文件的 `profitloss_sum`(清單)與 `total`(`ProfitLossTotal`) / the documented `profitloss_sum` list and `total` | 第二筆只有 `code`、`quantity`、`pnl`(其餘必須是 `null`);`total.buy_cost` 是字串型數字 / the second entry has only `code`, `quantity` and `pnl`; `total.buy_cost` is a string-typed number |
+
+其餘帳務端點(`position_detail`、`profit_loss_detail`、期貨各端點、`settlements`、`trading_limits`、`margin`、`account_balance`)沒有 fixture 檔,
+它們的預設回應寫在 `Support/FakeShioajiHttpServer.cs` 的 `MapPortfolioDefaults`(依據寫在該方法的註解裡),情境測試的 JSON 直接寫在測試裡。
+The other portfolio endpoints have no fixture file: their default answers are in `MapPortfolioDefaults` of
+`Support/FakeShioajiHttpServer.cs` (with the basis in that method's comment), and scenario JSON is inline in the tests.
+
 ## 沒有 fixture 檔的回應 / Responses without a fixture file
 
 `/api/v1/info`、`/auth/accounts`、`/auth/usage`、`/stream/status` 的 JSON 直接寫在

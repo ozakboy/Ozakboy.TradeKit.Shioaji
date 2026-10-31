@@ -204,9 +204,10 @@ public sealed class FakeSseConnection
 /// </description></item>
 /// <item><description>
 /// §4 訂閱回應 <c>{success, message, subscription}</c>;§2 帳號是陣列、欄位 <c>account_type</c> 等;
-/// §7 沒有的帳務端點本替身也沒有。
+/// §7 帳務端點的預設回應見 <c>MapPortfolioDefaults</c>(套件不呼叫的預收款項等端點本替身沒有)。
 /// §4 subscription answer <c>{success, message, subscription}</c>; §2 accounts as an array with fields such as
-/// <c>account_type</c>; the account endpoints of §7 the package does not call are not here either.
+/// <c>account_type</c>; the default answers of the §7 portfolio endpoints are in <c>MapPortfolioDefaults</c> (the
+/// reservation endpoints and the like that the package does not call are not here).
 /// </description></item>
 /// <item><description>
 /// §5 歷史與查詢:<c>kbars</c> / <c>ticks</c> 的欄位陣列回應與其餘查詢端點的預設樣本,見 <c>MapHistoryDefaults</c>。
@@ -573,6 +574,7 @@ public sealed class FakeShioajiHttpServer : IDisposable
         });
 
         MapHistoryDefaults();
+        MapPortfolioDefaults();
 
         Map("POST", "/api/v1/stream/subscribe", request =>
         {
@@ -640,6 +642,116 @@ public sealed class FakeShioajiHttpServer : IDisposable
         Map("GET", "/api/v1/data/regulatory_notice", _ => new FakeResponse(200, """
             [{"code":"5678","name":"Sample B"}]
             """));
+    }
+
+    /// <summary>
+    /// 帳務端點的預設回應,依官方文件(<c>https://sinotrade.github.io/llms-full.txt</c>)的帳務章節與
+    /// <c>docs/external/shioaji-http-api.md</c> §7 的欄位清單。
+    /// 依據與推定:
+    /// ① 欄位名與型別取自文件的欄位表(StockPosition / FuturePosition / *PositionDetail / *ProfitLoss /
+    /// *ProfitDetail / *ProfitLossSummary / SettlementV1 / 交易額度 / 保證金 / 銀行餘額);
+    /// ② <c>account_balance</c> 的範例 JSON 與 <c>settlements</c> 範例的第一列逐字取自文件(<c>settlements</c> 的第二列
+    /// 是替身自編的負數情境);
+    /// ③ 文件對其餘端點<b>沒有逐字的回應範例</b>,所以這裡用 Python SDK 回傳型別的 JSON 化(物件陣列、單一物件),
+    /// 這是<b>推定</b>;收到的 <c>account_type</c> 決定回證券還是期貨的欄位集,這也是推定(文件只說 <c>position_unit</c> 等
+    /// 同一個路徑同時有 <c>StockPosition</c> 與 <c>FuturePosition</c> 兩種回應);
+    /// ④ <c>trading_limits</c> 的範例 JSON 文件被截斷,數值是替身自編;「交易日 08:30 至 15:00 才能查」的限制替身不模擬。
+    /// 回應的外形若要換成包裝物件或欄位陣列,測試用 <see cref="Map(string, string, int, string)"/> 覆蓋。
+    /// The default answers of the portfolio endpoints, from the portfolio chapter of the official documentation
+    /// (<c>https://sinotrade.github.io/llms-full.txt</c>) and the field lists of
+    /// <c>docs/external/shioaji-http-api.md</c> §7. Basis and inferences:
+    /// (1) field names and types come from the documentation's field tables;
+    /// (2) the example JSON of <c>account_balance</c> and the first row of the <c>settlements</c> example are taken
+    /// verbatim from the documentation (the second <c>settlements</c> row is the fake's own negative-amount scenario);
+    /// (3) the documentation has <b>no verbatim response</b> for the other endpoints, so the JSON form of the Python
+    /// SDK's return types (arrays of objects, single objects) is used, which is an <b>inference</b>; the received
+    /// <c>account_type</c> decides whether the securities or the futures field set is answered, also an inference (the
+    /// documentation says only that one path carries both <c>StockPosition</c> and <c>FuturePosition</c>);
+    /// (4) the documentation's <c>trading_limits</c> example is truncated, so its numbers are the fake's own, and the
+    /// "queryable 08:30 to 15:00 on trading days" limit is not simulated. To change a response to a wrapper object or
+    /// column arrays, tests override with <see cref="Map(string, string, int, string)"/>.
+    /// </summary>
+    private void MapPortfolioDefaults()
+    {
+        MapByAccountType(
+            "/api/v1/portfolio/position_unit",
+            """
+            [{"id":0,"code":"2330","direction":"Buy","quantity":2,"price":600.5,"last_price":610,"pnl":18999,"yd_quantity":2,"cond":"Cash","margin_purchase_amount":0,"collateral":0,"short_sale_margin":0,"interest":0}]
+            """,
+            """
+            [{"id":0,"code":"TXFK6","direction":"Sell","quantity":1,"price":23000,"last_price":22950,"pnl":10000}]
+            """);
+
+        MapByAccountType(
+            "/api/v1/portfolio/position_detail",
+            """
+            [{"date":"2026-10-30","code":"2330","quantity":2,"price":600.5,"last_price":610,"dseq":"AB123","direction":"Buy","pnl":18999,"currency":"TWD","fee":1711,"cond":"Cash","ex_dividends":0,"interest":0,"margintrading_amt":0,"collateral":0}]
+            """,
+            """
+            [{"date":"2026-10-30","code":"TXFK6","quantity":1,"price":23000,"last_price":22950,"dseq":"FA001","direction":"Sell","pnl":10000,"currency":"TWD","fee":40,"entry_quantity":1}]
+            """);
+
+        MapByAccountType(
+            "/api/v1/portfolio/profit_loss",
+            """
+            [{"id":1,"code":"2330","quantity":1,"pnl":4500,"date":"2026-10-30","dseq":"AB124","price":605,"pr_ratio":0.75,"cond":"Cash","seqno":"000123"}]
+            """,
+            """
+            [{"id":2,"code":"TXFK6","quantity":1,"pnl":8000,"date":"2026-10-30","entry_price":23000,"cover_price":23040,"tax":10,"fee":40,"direction":"Buy"}]
+            """);
+
+        MapByAccountType(
+            "/api/v1/portfolio/profit_loss_detail",
+            """
+            [{"date":"2026-10-30","code":"2330","quantity":1,"dseq":"AB124","fee":855,"tax":1815,"currency":"TWD","price":605,"cost":600500,"rep_margintrading_amt":0,"rep_collateral":0,"rep_margin":0,"shortselling_fee":0,"ex_dividend_amt":0,"interest":0,"trade_type":"DayTrade","cond":"Cash"}]
+            """,
+            """
+            [{"date":"2026-10-30","code":"TXFK6","quantity":1,"dseq":"FA002","fee":40.0,"tax":10.0,"currency":"TWD","direction":"Buy","entry_date":"2026-10-29","entry_quantity":1,"entry_seqno":"000045","entry_price":23000,"cover_price":23040,"pnl":8000}]
+            """);
+
+        MapByAccountType(
+            "/api/v1/portfolio/profitloss_sum",
+            """
+            {"profitloss_sum":[{"code":"2330","quantity":1,"entry_price":600.5,"cover_price":605,"pnl":4500,"currency":"TWD","entry_cost":600500,"cover_cost":605000,"buy_cost":600855,"sell_cost":603185,"pr_ratio":0.38,"cond":"Cash"}],"total":{"entry_amount":600500,"cover_amount":605000,"quantity":1,"buy_cost":600855,"sell_cost":603185,"pnl":2330,"pr_ratio":0.39}}
+            """,
+            """
+            {"profitloss_sum":[{"code":"TXFK6","quantity":1,"entry_price":23000,"cover_price":23040,"pnl":8000,"currency":"TWD","direction":"Buy","tax":10,"fee":40}],"total":{"entry_amount":0,"cover_amount":0,"quantity":1,"buy_cost":0,"sell_cost":0,"pnl":7950,"pr_ratio":0}}
+            """);
+
+        // 取自文件的範例(settlements:{date, amount, T};account_balance:{acc_balance, date, errmsg}),見上方說明。
+        // Taken from the documentation's examples (settlements and account_balance); see the remarks above.
+        Map("POST", "/api/v1/portfolio/settlements", _ => new FakeResponse(200, """
+            [{"date": "2026-05-21", "amount": 100000.0, "T": 0}, {"date": "2026-05-22", "amount": -2500.5, "T": 1}]
+            """));
+
+        Map("POST", "/api/v1/portfolio/account_balance", _ => new FakeResponse(200, """
+            {"acc_balance":100000.0,"date":"2026-05-19 09:21:10.085711","errmsg":""}
+            """));
+
+        Map("POST", "/api/v1/portfolio/trading_limits", _ => new FakeResponse(200, """
+            {"trading_limit":5000000,"trading_used":1200000,"trading_available":3800000,"margin_limit":2000000,"margin_used":0,"margin_available":2000000,"short_limit":1000000,"short_used":0,"short_available":1000000}
+            """));
+
+        Map("POST", "/api/v1/portfolio/margin", _ => new FakeResponse(200, """
+            {"yesterday_balance":500000.0,"today_balance":510000.0,"deposit_withdrawal":0.0,"fee":40.0,"tax":10.0,"initial_margin":184000.0,"maintenance_margin":141000.0,"margin_call":0.0,"risk_indicator":277.2,"royalty_revenue_expenditure":0.0,"equity":509950.0,"equity_amount":509950.0,"option_openbuy_market_value":0.0,"option_opensell_market_value":0.0,"option_open_position":0.0,"option_settle_profitloss":0.0,"future_open_position":10000.0,"today_future_open_position":10000.0,"future_settle_profitloss":8000.0,"available_margin":325950.0,"plus_margin":0.0,"plus_margin_indicator":0.0,"security_collateral_amount":0.0,"order_margin_premium":0.0,"collateral_amount":0.0}
+            """));
+    }
+
+    private void MapByAccountType(string path, string stockBody, string futuresBody) =>
+        Map("POST", path, request => new FakeResponse(200, AccountTypeOf(request.Body) == "F" ? futuresBody : stockBody));
+
+    private static string? AccountTypeOf(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+
+            return document.RootElement.TryGetProperty("account_type", out var element) ? element.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private void RegisterSubscription(string body, bool add)

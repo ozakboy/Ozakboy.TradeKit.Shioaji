@@ -159,6 +159,19 @@ Console.WriteLine("server ready");
 using var stop = new CancellationTokenSource();
 var stoppedByRequest = false;
 
+var portfolioBodies = new Dictionary<string, string>
+{
+    ["/api/v1/portfolio/position_unit"] = """[{"id":0,"code":"2330","direction":"Buy","quantity":2,"price":600.5,"last_price":610,"pnl":18999}]""",
+    ["/api/v1/portfolio/position_detail"] = """[{"date":"2026-10-30","code":"2330","quantity":2,"price":600.5,"dseq":"AB123","direction":"Buy"}]""",
+    ["/api/v1/portfolio/profit_loss"] = """[{"id":1,"code":"2330","quantity":1,"pnl":4500,"date":"2026-10-30"}]""",
+    ["/api/v1/portfolio/profit_loss_detail"] = """[{"date":"2026-10-30","code":"2330","quantity":1,"trade_type":"DayTrade"}]""",
+    ["/api/v1/portfolio/profitloss_sum"] = """{"profitloss_sum":[{"code":"2330","quantity":1,"pnl":4500}],"total":{"pnl":4500}}""",
+    ["/api/v1/portfolio/trading_limits"] = """{"trading_available":3800000}""",
+    ["/api/v1/portfolio/settlements"] ="""[{"date": "2026-05-21", "amount": 100000.0, "T": 0}]""",
+    ["/api/v1/portfolio/account_balance"] = """{"acc_balance":100000.0,"date":"2026-05-19 09:21:10.085711","errmsg":""}""",
+    ["/api/v1/portfolio/margin"] = """{"equity":509950.0,"available_margin":325950.0}""",
+};
+
 if (lifetime is { } life)
 {
     stop.CancelAfter(life);
@@ -193,6 +206,17 @@ while (!stop.IsCancellationRequested)
             uds_plaintext = false,
             simulation,
         });
+    }
+    else if (portfolioBodies.TryGetValue(path, out var portfolioBody))
+    {
+        // 帳務端點的最小樣本,讓 ShioajiPortfolioClient 能對「監督器啟動的行程」查詢。欄位依官方文件的帳務章節
+        // (settlements 的 {date, amount, T} 與 account_balance 的 {acc_balance, date, errmsg} 逐字取自文件的範例,
+        // 其餘為依欄位表建構、回應外形屬推定),完整情境在 FakeShioajiHttpServer 的測試裡。
+        // Minimal samples of the portfolio endpoints, so ShioajiPortfolioClient can query a process the supervisor
+        // started. Fields follow the portfolio chapter of the official documentation (the settlements and
+        // account_balance shapes are the documentation's examples; the rest are built from the field tables and
+        // their response shape is an inference); the full scenarios live in the FakeShioajiHttpServer tests.
+        body = portfolioBody;
     }
     else if (path == "/__env")
     {

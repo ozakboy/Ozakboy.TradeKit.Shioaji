@@ -10,6 +10,7 @@ using Ozakboy.TradeKit.Shioaji.Contracts;
 using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
+using Ozakboy.TradeKit.Shioaji.Portfolio;
 using Ozakboy.TradeKit.Shioaji.Server;
 using Ozakboy.TradeKit.Shioaji.Streaming;
 
@@ -23,12 +24,12 @@ public static class ShioajiServiceCollectionExtensions
 {
     /// <summary>
     /// 註冊 Shioaji 本機 HTTP server 的用戶端:選項、經 <c>Ozakboy.Http</c> 管線的具名 <see cref="HttpClient"/>、
-    /// 低階與各區塊 client(含歷史資料 <see cref="ShioajiHistoryClient"/>)、串流讀取器、本地限流預算與流量計
-    /// <see cref="ShioajiTrafficMeter"/>。
+    /// 低階與各區塊 client(含歷史資料 <see cref="ShioajiHistoryClient"/> 與帳務 <see cref="ShioajiPortfolioClient"/>)、
+    /// 串流讀取器、本地限流預算與流量計 <see cref="ShioajiTrafficMeter"/>。
     /// Registers the clients for the Shioaji local HTTP server: the options, a named <see cref="HttpClient"/>
     /// going through the <c>Ozakboy.Http</c> pipeline, the low-level and area clients (the historical-data
-    /// <see cref="ShioajiHistoryClient"/> among them), the stream reader, the local rate budget, and the traffic
-    /// meter <see cref="ShioajiTrafficMeter"/>.
+    /// <see cref="ShioajiHistoryClient"/> and the portfolio <see cref="ShioajiPortfolioClient"/> among them), the
+    /// stream reader, the local rate budget, and the traffic meter <see cref="ShioajiTrafficMeter"/>.
     /// </summary>
     /// <param name="services">服務集合。The service collection.</param>
     /// <param name="configure">
@@ -166,6 +167,10 @@ public static class ShioajiServiceCollectionExtensions
             provider.GetRequiredService<ShioajiRateBudget>()));
 
         services.AddSingleton(provider => new ShioajiOrderClient(
+            provider.GetRequiredService<ShioajiApiClient>(),
+            provider.GetRequiredService<ShioajiRateBudget>()));
+
+        services.AddSingleton(provider => new ShioajiPortfolioClient(
             provider.GetRequiredService<ShioajiApiClient>(),
             provider.GetRequiredService<ShioajiRateBudget>()));
 

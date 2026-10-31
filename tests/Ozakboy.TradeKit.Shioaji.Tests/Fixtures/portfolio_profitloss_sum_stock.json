@@ -1,0 +1,2 @@
+{"profitloss_sum":[{"code":"2330","quantity":1,"entry_price":600.5,"cover_price":605,"pnl":4500,"currency":"TWD","entry_cost":600500,"cover_cost":605000,"buy_cost":600855,"sell_cost":603185,"pr_ratio":0.38,"cond":"Cash"},
+{"code":"0050","quantity":"2","pnl":"-87.5"}],"total":{"entry_amount":600500,"cover_amount":605000,"quantity":3,"buy_cost":"600855","sell_cost":603185,"pnl":2330,"pr_ratio":0.39}}

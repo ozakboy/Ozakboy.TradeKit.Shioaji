@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Ozakboy.Security.Masking;
 using Ozakboy.TradeKit.Shioaji.Auth;
+using Ozakboy.TradeKit.Shioaji.Portfolio;
 using Ozakboy.TradeKit.Shioaji.Server;
 using Ozakboy.TradeKit.Shioaji.Tests.Support;
 
@@ -269,6 +270,36 @@ public sealed class ShioajiServerSupervisorTests
         Assert.IsNull(rig.Supervisor.Status.ProcessId);
         Assert.AreEqual(0, Process.GetProcessesByName(FakeProcessName).Length, "no process may be left behind");
         Assert.IsTrue((await rig.Host.Auth.ProbeInfoAsync(TimeSpan.FromSeconds(1), CancellationToken.None)).IsFailure);
+    }
+
+    [TestMethod]
+    public async Task PortfolioClientQueriesTheProcessTheSupervisorStarted()
+    {
+        await using var rig = Rig.Create();
+
+        Assert.IsTrue((await rig.Supervisor.StartAsync()).IsSuccess);
+
+        var settlements = await rig.Host.Portfolio.ListSettlementsAsync();
+        var balance = await rig.Host.Portfolio.GetAccountBalanceAsync();
+        var positions = await rig.Host.Portfolio.ListStockPositionsAsync();
+        var details = await rig.Host.Portfolio.ListStockPositionDetailsAsync(0);
+        var profitLoss = await rig.Host.Portfolio.ListStockProfitLossAsync(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31));
+        var profitLossDetails = await rig.Host.Portfolio.ListStockProfitLossDetailsAsync(1);
+        var summary = await rig.Host.Portfolio.GetStockProfitLossSummaryAsync(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31));
+        var limits = await rig.Host.Portfolio.GetTradingLimitsAsync();
+        var margin = await rig.Host.Portfolio.GetMarginAsync();
+
+        Assert.AreEqual(100000m, settlements.GetValueOrThrow().Single().Amount);
+        Assert.AreEqual(100000m, balance.GetValueOrThrow().Balance);
+        Assert.AreEqual("2330", positions.GetValueOrThrow().Single().Code);
+        Assert.AreEqual("AB123", details.GetValueOrThrow().Single().Dseq);
+        Assert.AreEqual(4500m, profitLoss.GetValueOrThrow().Single().Pnl);
+        Assert.AreEqual(ShioajiProfitLossTradeType.DayTrade, profitLossDetails.GetValueOrThrow().Single().TradeType);
+        Assert.AreEqual(4500m, summary.GetValueOrThrow().Total!.Pnl);
+        Assert.AreEqual(3800000m, limits.GetValueOrThrow().TradingAvailable);
+        Assert.AreEqual(509950m, margin.GetValueOrThrow().Equity);
+
+        Assert.IsTrue((await rig.Supervisor.StopAsync()).IsSuccess);
     }
 
     [TestMethod]

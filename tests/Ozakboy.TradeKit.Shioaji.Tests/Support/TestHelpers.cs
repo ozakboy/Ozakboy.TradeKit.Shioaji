@@ -6,6 +6,7 @@ using Ozakboy.TradeKit.Shioaji.Contracts;
 using Ozakboy.TradeKit.Shioaji.History;
 using Ozakboy.TradeKit.Shioaji.MarketData;
 using Ozakboy.TradeKit.Shioaji.Orders;
+using Ozakboy.TradeKit.Shioaji.Portfolio;
 using Ozakboy.TradeKit.Shioaji.Streaming;
 
 namespace Ozakboy.TradeKit.Shioaji.Tests.Support;
@@ -82,6 +83,8 @@ internal sealed class ShioajiTestHost : IDisposable
     public ShioajiOrderClient Orders => _provider.GetRequiredService<ShioajiOrderClient>();
 
     public ShioajiHistoryClient History => _provider.GetRequiredService<ShioajiHistoryClient>();
+
+    public ShioajiPortfolioClient Portfolio => _provider.GetRequiredService<ShioajiPortfolioClient>();
 
     public ShioajiTrafficMeter Traffic => _provider.GetRequiredService<ShioajiTrafficMeter>();
 

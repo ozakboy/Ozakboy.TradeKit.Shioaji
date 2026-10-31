@@ -8,6 +8,97 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-31
+
+**加入帳務查詢:庫存、已實現損益、交割款、交易額度、期貨保證金與銀行餘額。只新增、不改現有的公開簽章。**
+**Adds portfolio queries: positions, realized profit and loss, settlements, trading limits, futures margin and the bank
+balance. Additions only; no existing public signature changed.**
+
+**這一版的帳務端點只對本機假伺服器與依文件建構的 fixture 驗證過,尚未對真的 `shioaji server` 實測。**官方文件列了每個端點的請求與回應欄位,
+但只有 `settlements` 與 `account_balance` 有逐字範例,所以回應的外形(裸陣列、包著陣列的物件、欄位陣列)是推定的,三種都收;細節與其他推定見
+README 的「帳務查詢(0.3.0)」與「限制與未實測事項」。
+**The portfolio endpoints in this release are verified only against the local fake server and fixtures built from the documentation, not
+against a real `shioaji server`.** The official documentation lists the request and response fields of every endpoint but has a verbatim
+example for only `settlements` and `account_balance`, so the response shape (a bare array, an object wrapping an array, or column arrays)
+is an inference and all three are accepted; see "Portfolio queries (0.3.0)" and "Limits and unmeasured behaviour" in the README for this
+and the other inferences.
+
+### 新增功能 / Added
+
+- **`ShioajiPortfolioClient`**(由 `AddShioaji` 註冊為單例):證券與期貨的回應欄位不同,所以各有一組方法。
+  `ListStockPositionsAsync` / `ListFuturesPositionsAsync`(`POST /api/v1/portfolio/position_unit`)、
+  `ListStockPositionDetailsAsync` / `ListFuturesPositionDetailsAsync`(`position_detail`)、
+  `ListStockProfitLossAsync` / `ListFuturesProfitLossAsync`(`profit_loss`)、
+  `ListStockProfitLossDetailsAsync` / `ListFuturesProfitLossDetailsAsync`(`profit_loss_detail`,證券明細帶交易類型 `Common` 或 `DayTrade`)、
+  `GetStockProfitLossSummaryAsync` / `GetFuturesProfitLossSummaryAsync`(`profitloss_sum`,依商品的清單加合計),
+  以及只有單一帳號類型的 `ListSettlementsAsync`(`settlements`,`{date, amount, T}`)、`GetTradingLimitsAsync`(`trading_limits`)、
+  `GetAccountBalanceAsync`(`account_balance`)與 `GetMarginAsync`(期貨 `margin`)。
+  The securities and futures response fields differ, so each has its own method: positions, position details, realized profit and loss
+  (with details that carry the trade type, ordinary or day trade, and a summary with a total), plus the single-account-type settlements,
+  trading limits, bank balance and futures margin. Registered as a singleton by `AddShioaji`.
+- **請求帶可選的 `ShioajiPortfolioAccount { BrokerId, AccountId, PersonId }`**,省略時 server 用預設帳號。`BrokerId` 與 `AccountId` 必須同時給或同時省略。
+  The requests take an optional `ShioajiPortfolioAccount`; omitted, the server uses its default account. `BrokerId` and `AccountId` come
+  together or not at all.
+- **全部計入 `Portfolio` 預算**(5 秒 25 次),在本地檢查之後才取額度;POST 永不重試。起始日晚於結束日、只給 `BrokerId` 或只給 `AccountId`
+  在本地就回 `shioaji.validation.invalid_argument`,不送出、不佔額度。
+  Every call counts against the `Portfolio` budget (25 per 5 seconds) after its local checks, and a POST is never retried. A start after
+  the end, or a `BrokerId` without an `AccountId` (or the reverse), is `shioaji.validation.invalid_argument` locally, with nothing sent and
+  no budget taken.
+- **型別化的模型與列舉**:`ShioajiStockPosition`、`ShioajiFuturesPosition`、各種明細與損益列、`ShioajiProfitLossSummary<TItem>` 與
+  `ShioajiProfitLossTotal`、`ShioajiSettlement`、`ShioajiTradingLimits`、`ShioajiMargin`、`ShioajiAccountBalance`;列舉
+  `ShioajiPositionUnit`(整股 / 零股)、`ShioajiPositionCondition`(`Cash`、`Netting`、`MarginTrading`、`ShortSelling`、`Emerging`)與
+  `ShioajiProfitLossTradeType`(`Common`、`DayTrade`)。
+  Typed models and enums for all of the above, with `ShioajiPositionUnit`, `ShioajiPositionCondition` and `ShioajiProfitLossTradeType`.
+- **`ShioajiApiPaths` 新增九個路徑常數**(`PortfolioPositionUnit`、`PortfolioPositionDetail`、`PortfolioProfitLoss`、`PortfolioProfitLossDetail`、
+  `PortfolioProfitLossSummary`、`PortfolioSettlements`、`PortfolioTradingLimits`、`PortfolioMargin`、`PortfolioAccountBalance`)。
+  Nine new path constants in `ShioajiApiPaths`.
+
+### 功能優化 / Changed
+
+- **數字與缺漏的處理**:金額、價格、數量、損益一律由原始 JSON 文字讀成 `decimal`(數字或字串型數字都收,不經 `double`);文件寫成整數的欄位也用
+  `decimal`。一列只有識別欄位(代碼與數量,或交割款的日期、金額與 `T`)缺漏或讀不懂時整筆失敗,其餘欄位缺漏是 `null`、列舉是 `Unknown`,絕不補 0。
+  Money, prices, quantities and profit and loss are read from raw JSON text into `decimal` (numbers and string-typed numbers, never
+  `double`), fields the documentation types as integers included. A row fails only when its identifying fields are missing or unreadable;
+  every other missing field is `null` (an enum reads `Unknown`) and is never filled with zero.
+- **日期**:交易日、建倉日是台北日曆日(`DateOnly`),接受 `yyyy-MM-dd`、`yyyy/MM/dd`、`yyyyMMdd`,後面帶時間時只取日期那段、不做時區換算;
+  銀行餘額的查詢時間不帶時區視為台北牆上時間,轉成 UTC。
+  Trade and entry dates are Taipei calendar days (`DateOnly`), taken as written; the bank balance's query time follows the usual rule (no
+  offset means Taipei wall-clock time, converted to UTC).
+- **銀行餘額的 `errmsg`**:server 在 200 回應裡帶的錯誤訊息放在 `ShioajiAccountBalance.ErrorMessage`、餘額為 `null`,不當成失敗。
+  An `errmsg` the server carries inside a 200 response lands in `ShioajiAccountBalance.ErrorMessage` with a `null` balance and is not a
+  failure.
+
+### 問題修正 / Fixed
+
+- **下單、改價、刪單遇到網路錯誤一律標「結果未知」**:原本只有逾時與 5xx 才標,連線錯誤被當成「沒送出」。但網路錯誤分不出連線被拒、
+  送出後被重設、收到 2xx 後讀回應時斷線,後兩種單可能已經成立;呼叫端若據此重送就會重複下單。現在 `ServerUnreachable` 也帶
+  `OutcomeUnknown`,請查詢委託確認,不要重送。
+  Placing, repricing and cancelling now flag every network error as having an unknown outcome. Only timeouts and 5xx answers were
+  flagged before, and a connection error read as "not sent". A network error cannot tell a refused connection from a reset after
+  sending or a drop while reading a 2xx answer, and in the last two the order may stand; a caller that resent on that basis would place
+  it twice. `ServerUnreachable` now carries `OutcomeUnknown` too: look the order up and do not resend.
+
+### 技術改進 / Technical
+
+- 內部新增 `ShioajiTimestamps.TryReadDate`;帳務解析器重用 `ShioajiFieldReader` 與 `ShioajiColumnarReader`(欄位陣列失敗時改回一般的
+  `shioaji.response.malformed`,不是歷史資料專屬的 `shioaji.history.malformed`)。
+  Internally a new `ShioajiTimestamps.TryReadDate`; the parser reuses `ShioajiFieldReader` and `ShioajiColumnarReader`, and a failing
+  column array is reported as the general `shioaji.response.malformed`, not the history-specific `shioaji.history.malformed`.
+- 測試:假伺服器 `FakeShioajiHttpServer` 加入九個帳務端點的預設回應(依據與推定寫在 `MapPortfolioDefaults` 的註解),`FakeShioajiServerExe` 加入最小樣本;
+  新增帳務用戶端、解析器與 README 範例的測試;fixture 來源見 `Fixtures/PROVENANCE.md`。
+  Tests: the fake server answers all nine portfolio endpoints by default (the basis and the inferences are in the comment of
+  `MapPortfolioDefaults`), the fake executable serves minimal samples, and there are new tests for the client, the parser and the README
+  example; the fixtures are described in `Fixtures/PROVENANCE.md`.
+
+### 已知限制 / Known limitations
+
+- 尚未對真 server 實測;下列是推定:回應外形、同一路徑依 `account_type` 回證券或期貨欄位集、期貨查詢不帶 `unit`、`amount` 正負號與 `pr_ratio`、
+  `risk_indicator` 的單位、`detail_id` 取自前一個呼叫的 `Id`。`trading_limits` 文件寫只在交易日 08:30 至 15:00 能查,本套件不替你判斷時段。
+  Not yet run against a real server. These are inferences: the response shapes, one path answering the securities or the futures field set
+  by `account_type`, a futures query sending no `unit`, the sign of `amount`, the units of `pr_ratio` and `risk_indicator`, and `detail_id`
+  being the `Id` of the previous call. The documentation says `trading_limits` can be queried only 08:30 to 15:00 on trading days; this
+  package does not judge the time of day for you.
+
 ## [0.2.1] - 2026-10-31
 
 **只改文件,程式碼與行為都沒有變。**
