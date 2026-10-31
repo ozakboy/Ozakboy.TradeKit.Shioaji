@@ -15,14 +15,12 @@ It is built on the [`Ozakboy.Http`](https://github.com/ozakboy/Ozakboy.Http) pip
 only the .NET BCL, first-party Microsoft packages and `Ozakboy.*`, judged by the **transitive** graph rather than by
 package name; every dependency here complies, see "Dependency policy" at the end.
 
-> **0.1.x is M0: let a desktop application start the server, see market data, place one simulated order and receive
-> its report; 0.2.0 adds historical data (bars, ticks, snapshots, the all-market daily OHLCV and more) and a traffic
-> meter.** It has **never been run against a real `shioaji server` with valid credentials**: 0.1.1 was only
-> adjusted after one run of the real `shioaji server start` with fake credentials (which measured start-up and
-> login-failure behaviour; see "Facts measured on 2026-10-30"), and every other test runs against a local fake
-> server. Which behaviours follow the documentation and which were never measured is listed in "Limits and
-> unmeasured behaviour"; **the path and the response shape of the all-market daily OHLCV in particular are
-> unverified.** **Read that section before going live.**
+> **Current status:** login, accounts, the order-report subscription (stocks and futures), the contract list and
+> details, 1-minute bars, whole-day ticks and the usage query were run with valid credentials against SinoPac's
+> **simulation** environment (results in "Known server behaviour"). The market-data event fields, the order and
+> order-report response shapes, and the other history endpoints still follow the documentation and are listed in
+> "Limits and unmeasured behaviour"; **the path and the response shape of the all-market daily OHLCV in particular
+> are unverified.** **Read that section before going live.**
 
 ## What this release does
 
@@ -35,7 +33,7 @@ package name; every dependency here complies, see "Dependency policy" at the end
 | Contracts: one contract, details (with day-trading eligibility), a paged list, the futures list | Done |
 | `ListAllContractsAsync`: walks every page of a category at 500 per page, each page through the `MarketQuery` budget (0.2.0) | Done |
 | Historical data (`ShioajiHistoryClient`, 0.2.0): 1-minute bars (30-day range checked locally), ticks, snapshots (500-contract check), scanner, short-stock sources, credit enquiry, disposition and attention lists | Done; the response shapes of everything but bars and ticks are unverified |
-| All-market daily OHLCV (`GetDailyQuotesAsync`, 0.2.0) | Done, but **the path and the response shape are unverified, awaiting a real server's OpenAPI**; the path is overridable with `ShioajiOptions.DailyQuotesPath` |
+| All-market daily OHLCV (`GetDailyQuotesAsync`, 0.2.0) | Done, but **the path and the response shape are unverified, not yet checked against a real server's OpenAPI**; the path is overridable with `ShioajiOptions.DailyQuotesPath` |
 | Column-array responses (`datetime[]`, `Open[]` …): any column of a different length fails the whole response (`shioaji.history.malformed`) | Done |
 | Traffic meter (`ShioajiTrafficMeter`, 0.2.0): response bytes bucketed by Taipei day, reset at 08:00, compared with the server's own usage | Done |
 | Market-data subscribe / unsubscribe, with the three silently failing subscriptions refused locally | Done |
@@ -43,7 +41,7 @@ package name; every dependency here complies, see "Dependency policy" at the end
 | Drop and idle detection, backoff reconnection, a post-reconnect replay callback, lifecycle events, a bounded queue | Done |
 | Placing orders (stocks and futures), repricing, resizing, cancelling, listing; order requests never retried | Done |
 | Local rate budget: market queries, account queries, orders, the subscription ceiling | Done |
-| Mapping to the neutral `TradeKit.Abstractions` interfaces (`IExchangeClient` and so on) | Not yet; M1 |
+| Mapping to the neutral `TradeKit.Abstractions` interfaces (`IExchangeClient` and so on) | Not yet; see "Future" |
 | Account data (`portfolio`), combo orders, earmarking | Not yet; see "Future" |
 
 Every price and quantity is a `decimal` and every time is a UTC `DateTimeOffset`. Expected failures are always
@@ -240,9 +238,10 @@ var traffic = provider.GetRequiredService<ShioajiTrafficMeter>().Snapshot();
 Console.WriteLine($"used {traffic.Bytes} bytes, resets {traffic.NextResetAt:O}");
 ```
 
-`auth` is the `ShioajiAuthClient` from the main example. This one is copied by `TheBackfillExample_…` in the same
-test class. The all-market daily OHLCV is `history.GetDailyQuotesAsync(date)`; read the warning about it under "Limits
-and unmeasured behaviour" first.
+`auth` is the `ShioajiAuthClient` from the main example. A test copies this example line by line, so it compiles and
+runs. **Note that `bar.Time` is the end of its minute** (Taiwan stocks run 09:01 to 13:30 each trading day).
+Subtract 1 minute to store the open time. The all-market daily OHLCV is `history.GetDailyQuotesAsync(date)`; read the
+warning about it under "Limits and unmeasured behaviour" first.
 
 ### Historical data in brief (0.2.0)
 
@@ -431,35 +430,49 @@ strategy a broken book. A missing required field (code, time, price, book arrays
 - The `ShioajiServerStatus` snapshot: `State`, `ProcessId`, `StartedAt`, `Restarts`, `LastExitCode`, `LastError`,
   `LogFilePath`.
 
-## Facts measured on 2026-10-30 against the real server (no valid credentials)
+## Known server behaviour
 
-One run of the real `shioaji.exe server start --no-open` with fake credentials (`SJ_HTTP_ADDR=127.0.0.1:18080`,
-`SJ_HOME_PATH` pointing at a temporary directory). **No login ever succeeded**, so only start-up and login failure
-are measured; the rest is still inferred from the documentation.
+The real `shioaji server start --no-open` shows these behaviours, which the documentation does not state.
 
-- **The server is a foreground process and does not detach.** On a failed login the process simply exits, and the last
-  stdout line is
-  `Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): provided string contained invalid character '_' at byte 5`.
-  So the "exits 0 while the server still answers → Attached" path does not happen in practice; it stays in the code
-  only as a defence.
-- **The output carries ANSI colour codes**, for example `ESC[2m2026-10-30T08:33:02.060484ZESC[0m ESC[32m INFO ESC[0m …`.
+**Process and output**
+
+- **The server is a foreground process and does not detach.** On a failed login the process exits, and the last
+  stdout line is `Error: Authentication failed: …`. So the "exits 0 while the server still answers → Attached"
+  path does not happen in practice. It stays in the code only as a defence.
+- **The output carries ANSI colour codes.** The supervisor strips them before it logs a line.
 - **The first stdout line at start is `server log: <SJ_HOME_PATH>\logs\server-<port>\server.<UTC date>.log`.**
-- **`secret_key` must be base58**; a value with a character such as `_` makes the server fail the login and exit.
-- **The output of `shioaji server status` is in toon format**; with no server running it is four lines:
+- **`secret_key` must be base58.** A value with a character such as `_` makes the server fail the login and exit.
+- **The output of `shioaji server status` is in toon format.** With no server running it is four lines:
   ```
   running: false
   pid: null
-  port: 18080
+  port: 8080
   healthy: false
   ```
-  This package does **not** parse it (health is judged with `GET /api/v1/info`); the format is recorded here only.
+  This package does **not** parse it (health is judged with `GET /api/v1/info`). The format is recorded here only.
+
+**Historical data (simulation environment)**
+
+- **The `datetime` of a 1-minute bar is the end of its minute**, in Taipei time without an offset. Taiwan stocks run
+  09:01 to 13:30 each trading day. The 09:01 bar holds the opening call auction and the 13:30 bar holds the closing
+  one. A minute with no trade has no bar.
+- **Units:** for stocks, `Volume` is in lots and `Amount` is in TWD (price × shares). For futures, `Volume` is in
+  contracts.
+- **Indices and continuous futures also have 1-minute bars.** Futures include the night session (15:00 to 05:00 the
+  next day).
+- **Traffic reference:** 30 days of 1-minute bars for one stock take about 0.3 to 0.5 MB. One whole day of ticks for
+  a heavily traded stock takes about 0.4 MB.
+- **The `bytes` of `GET /api/v1/auth/usage` updates with a delay** (it catches up some seconds after a burst of
+  requests). Judge the remaining traffic mainly with the local `ShioajiTrafficMeter`, and use the server's figure as a
+  check.
+- **Contract details** carry the reference price and the up and down limits for stocks and futures. Indices carry
+  only the reference price. The `target_code` of a continuous future is the actual contract of the month.
 
 ## Limits and unmeasured behaviour
 
-**Nothing here has yet been run against a real `shioaji server` with valid credentials** (only the start-up and
-login-failure run above). Each item below is either unwritten in the documentation or written but never measured by
-me. The package handles them defensively, which is not the same as correctly; on the first successful login against a
-real server (the M0 measurement), check each against the log:
+Each item below is either unwritten in the documentation or not yet confirmed against a real server. The package
+handles them defensively, which is not the same as correctly. When you first use it in your environment, check each
+item against the log:
 
 - **The heartbeat format and cadence.** Undocumented. The package treats event names `heartbeat` / `ping`, a blank
   name, and unknown non-JSON-object events as heartbeats and keeps their text; SSE comment lines also count as
@@ -484,12 +497,12 @@ real server (the M0 measurement), check each against the log:
   does not fail the event (only code, time, price and the books are required).
 - **The all-market daily OHLCV: its path and its response shape (0.2.0).** The documentation mentions only the command
   line's `shioaji data daily-quotes --date YYYY-MM-DD --exclude-warrant` and no HTTP path. `GetDailyQuotesAsync` sends
-  `POST` `ShioajiOptions.DailyQuotesPath` (default **`/api/v1/data/daily_quotes`, unverified, awaiting a real
-  server's OpenAPI**) with `{date, exclude_warrant}`, and assumes an array of objects each carrying at least `code`,
+  `POST` `ShioajiOptions.DailyQuotesPath` (default **`/api/v1/data/daily_quotes`, unverified, not yet checked against a
+  real server's OpenAPI**) with `{date, exclude_warrant}`, and assumes an array of objects each carrying at least `code`,
   `open`, `high`, `low`, `close` and `volume`; any further fields are in `ShioajiDailyQuote.Raw`. A wrong path
   answers `shioaji.http.404`: find the real one on the server's `/docs` and set `DailyQuotesPath`.
 - **The shapes of the other query endpoints (0.2.0).** Only `kbars` and `ticks` have a documented shape (column
-  arrays with named fields). `snapshots`, `scanner`, `short_stock_sources`, `credit_enquire` and the two regulatory
+  arrays with named fields), and both are confirmed in the simulation environment. `snapshots`, `scanner`, `short_stock_sources`, `credit_enquire` and the two regulatory
   lists are read as an array of objects (or an object wrapping one, or for the regulatory lists a column-array
   object, which is how the Python SDK returns them); their field names come from the Python SDK and are unverified
   over HTTP, and everything not mapped stays in each item's `Raw`. The request bodies of `short_stock_sources` and
@@ -502,10 +515,9 @@ real server (the M0 measurement), check each against the log:
   unchanged, such cells will be 8 hours late. ISO strings (the form this package expects) are unaffected.
 - **Whether the 30-day bar limit counts both ends.** The broker says "≤ 30 days"; this package counts both ends
   (30 calendar days), the conservative reading.
-- **Whether `shioaji server start` stays in the foreground or detaches.** Measured on 2026-10-30: **foreground, no
-  detaching** (see above). The defensive path, a process that exits 0 while the server still answers counting as
-  Attached and a stop then calling `shioaji server stop`, remains in the code and was exercised only with a scripted
-  probe.
+- **The Attached defensive path.** The server is in fact a foreground process (see the previous section). The code
+  still keeps the path where a process that exits 0 while the server still answers counts as Attached, and a stop
+  then calls `shioaji server stop`. Only a scripted probe has exercised it.
 - **The behaviour of `server stop`, the `--port` parameter, whether an SSE connection counts toward the 5 login
   connections, and the real HTTP / SSE latency.** None measured.
 - **`SJ_AGENT_HARNESS`** has unknown semantics and is only passed through, via
@@ -518,7 +530,7 @@ real server (the M0 measurement), check each against the log:
 Deliberately not in this release, planned for later ones:
 
 - Implementing the neutral `TradeKit.Abstractions` interfaces: `IExchangeClient`, `IMarketDataFeed`,
-  `IUserDataFeed` (the mapping is M1).
+  `IUserDataFeed`.
 - Account data (`portfolio`): positions, profit and loss, settlements, margin, trading limits.
 - Enforcing "no live quotes from historical endpoints during trading hours" in code (0.2.0 documents the rule and
   leaves the decision to the caller; it needs a trading calendar to enforce).
@@ -570,7 +582,7 @@ Only the .NET BCL, first-party Microsoft packages and `Ozakboy.*` packages, judg
 | `Ozakboy.Http` | 0.3.4 | the request pipeline (retry, timeouts, sanitised logging, masking) |
 | `Ozakboy.Core.Abstractions` | 0.3.0 | `Result` / `Error` / `Precision` |
 | `Ozakboy.Security` | 0.1.1 | `SecretMasker` |
-| `Ozakboy.TradeKit.Abstractions` | 0.8.0 | referenced only; the neutral-interface mapping is M1 |
+| `Ozakboy.TradeKit.Abstractions` | 0.8.0 | referenced only; for the neutral-interface mapping see "Future" |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | 10.0.14 | DI registration |
 | `Microsoft.Extensions.Http` | 10.0.14 | the named `HttpClient`s |
 | `Microsoft.Extensions.Logging.Abstractions` | 10.0.14 | logging |

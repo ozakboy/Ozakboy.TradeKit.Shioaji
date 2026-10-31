@@ -14,10 +14,9 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 這個家族的政策是只用 .NET BCL、Microsoft 官方套件與 `Ozakboy.*`,判定看**遞移相依**而不是套件名稱;
 這裡的每一個相依都符合,見最後的「相依政策」。
 
-> **0.1.x 是 M0:讓桌面系統能啟動 server、看到行情、下一筆模擬單並收到回報;0.2.0 加入歷史資料(K 線、逐筆、快照、全市場日 OHLCV 等)與流量計。**
-> 它**從未用有效憑證連上真的 `shioaji server`**:0.1.1 只有拿假憑證對真的 `shioaji server start` 跑過一次(量到啟動與登入失敗的行為,
-> 見「2026-10-30 對真 server 的實測事實」),其餘所有測試都對著本機假伺服器跑。
-> 哪些行為是照文件推定、哪些完全沒量過,全部列在「限制與未實測事項」;**其中全市場日 OHLCV 的路徑與回應形狀尤其未驗證。**
+> **目前狀態:**已在永豐的**模擬環境**以有效憑證實測過登入、帳號、委託回報訂閱(證券與期貨)、商品列表與詳細資料、
+> 1 分 K、整日逐筆與用量查詢(結果見「官方 server 的已知行為」)。行情串流的事件欄位、下單與委託回報的回應形狀、
+> 以及其他歷史端點仍照文件推定,全部列在「限制與未實測事項」;**其中全市場日 OHLCV 的路徑與回應形狀尤其未驗證。**
 > **上實盤之前請先讀那一段。**
 
 ## 這一版做了什麼
@@ -31,7 +30,7 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 | 商品查詢:單一商品、詳細資訊(含當沖資格)、分頁列表、期貨列表 | 已完成 |
 | `ListAllContractsAsync`:以每頁 500 筆走完某個類別的所有分頁,每一頁先過 `MarketQuery` 預算(0.2.0) | 已完成 |
 | 歷史資料(`ShioajiHistoryClient`,0.2.0):1 分 K(本地檢查 30 天區間)、逐筆、快照(本地檢查 500 檔)、排行掃描、借券券源、資券餘額、處置股與注意股 | 已完成 —— 除了 K 線與逐筆,其餘回應形狀未驗證 |
-| 全市場日 OHLCV(`GetDailyQuotesAsync`,0.2.0) | 已完成,但**路徑與回應形狀都未驗證,待實機 OpenAPI 確認**;路徑可用 `ShioajiOptions.DailyQuotesPath` 覆寫 |
+| 全市場日 OHLCV(`GetDailyQuotesAsync`,0.2.0) | 已完成,但**路徑與回應形狀都未驗證,尚未對真 server 的 OpenAPI 確認**;路徑可用 `ShioajiOptions.DailyQuotesPath` 覆寫 |
 | 欄位陣列回應(`datetime[]`、`Open[]` …):任一欄位長度不一致就整筆失敗(`shioaji.history.malformed`) | 已完成 |
 | 流量計(`ShioajiTrafficMeter`,0.2.0):回應位元組按台北日分桶、08:00 重置,可與 server 自己回報的用量對照 | 已完成 |
 | 行情訂閱 / 取消,本地先擋三種會靜默失敗的訂閱 | 已完成 |
@@ -39,7 +38,7 @@ Shioaji 是永豐金證券的下單與行情 API。官方把它做成一個本�
 | 斷線與閒置偵測、退避重連、重連後的重放回呼、生命週期事件、有界佇列 | 已完成 |
 | 下單(股票與期貨)、改價、改量、撤單、列出委託;下單類請求永不重試 | 已完成 |
 | 本地限流預算:行情查詢、帳務、委託、訂閱上限 | 已完成 |
-| 與 `TradeKit.Abstractions` 的中立介面對映(`IExchangeClient` 等) | 未做 —— M1 |
+| 與 `TradeKit.Abstractions` 的中立介面對映(`IExchangeClient` 等) | 未做 —— 見「未來」 |
 | 帳務(`portfolio`)、組合單、預收 | 未做 —— 見「未來」 |
 
 所有價格與數量都是 `decimal`,所有時間都是 UTC `DateTimeOffset`。預期的失敗一律回傳 `Result` / `Result<T>`,
@@ -230,8 +229,9 @@ var traffic = provider.GetRequiredService<ShioajiTrafficMeter>().Snapshot();
 Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.NextResetAt:O}");
 ```
 
-`auth` 是主範例裡的 `ShioajiAuthClient`。這一段由同一個測試類別裡的 `TheBackfillExample_…` 逐行照抄。全市場日 OHLCV 是
-`history.GetDailyQuotesAsync(date)`;用它之前請先讀「限制與未實測事項」裡關於它的警告。
+`auth` 是主範例裡的 `ShioajiAuthClient`。這段範例有對應的測試逐行照抄,保證能編譯執行。
+**注意 `bar.Time` 是該分鐘的結束時刻**(例如台股每個交易日是 09:01 到 13:30),要存成開盤時刻請自行減 1 分鐘。
+全市場日 OHLCV 是 `history.GetDailyQuotesAsync(date)`;用它之前請先讀「限制與未實測事項」裡關於它的警告。
 
 ### 歷史資料重點(0.2.0)
 
@@ -383,30 +383,41 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
   解析不到就是 `null`。
 - `ShioajiServerStatus` 快照:`State`、`ProcessId`、`StartedAt`、`Restarts`、`LastExitCode`、`LastError`、`LogFilePath`。
 
-## 2026-10-30 對真 server(無有效憑證)的實測事實
+## 官方 server 的已知行為
 
-用假憑證對真的 `shioaji.exe server start --no-open` 跑了一次(`SJ_HTTP_ADDR=127.0.0.1:18080`,`SJ_HOME_PATH` 指到暫存目錄)。
-**沒有成功登入過**,所以只有啟動與登入失敗這一段是實測,其餘仍是文件推定。
+以下是對真的 `shioaji server start --no-open` 觀察到、文件沒有寫明的行為。
 
-- **server 是前景行程,不脫離。**登入失敗時行程直接退出,stdout 最後一行是
-  `Error: Authentication failed: login validation error: invalid secret_key (base58 decode failed): provided string contained invalid character '_' at byte 5`。
+**行程與輸出**
+
+- **server 是前景行程,不會自行脫離。**登入失敗時行程直接退出,stdout 最後一行是 `Error: Authentication failed: …`。
   所以「行程以 0 結束但 server 仍在回應 → Attached」那條路徑實務上不會發生,程式裡保留只是防禦。
-- **輸出帶 ANSI 色碼**,例如 `ESC[2m2026-10-30T08:33:02.060484ZESC[0m ESC[32m INFO ESC[0m …`。
+- **輸出帶 ANSI 色碼。**監督器寫進日誌前會先剝掉。
 - **啟動時 stdout 第一行是 `server log: <SJ_HOME_PATH>\logs\server-<port>\server.<UTC 日期>.log`。**
 - **`secret_key` 必須是 base58**;含 `_` 之類的字元,server 直接登入失敗退出。
 - **`shioaji server status` 的輸出是 toon 格式**,server 沒在跑時是四行:
   ```
   running: false
   pid: null
-  port: 18080
+  port: 8080
   healthy: false
   ```
   本套件**沒有**解析這個輸出(健康判斷走 `GET /api/v1/info`),這裡只是記下格式。
 
+**歷史資料(模擬環境)**
+
+- **1 分 K 的 `datetime` 是該分鐘的結束時刻**,不帶時區的台北時間。台股每個交易日是 09:01 到 13:30:
+  09:01 那根含開盤集合競價,13:30 那根含收盤集合競價;沒有成交的分鐘沒有那一根。
+- **單位:**股票的 `Volume` 是張、`Amount` 是元(價 × 股數);期貨的 `Volume` 是口。
+- **指數與期貨連續月也有 1 分 K。**期貨含夜盤(15:00 至次日 05:00)。
+- **流量參考:**一檔股票 30 天的 1 分 K 約 0.3–0.5 MB;一檔熱門股一天的整日逐筆約 0.4 MB。
+- **`GET /api/v1/auth/usage` 的 `bytes` 更新有延遲**(連續請求後十幾秒才跟上)。判斷剩餘流量請以本機的
+  `ShioajiTrafficMeter` 為主、server 回報的數字為輔。
+- **商品詳細資料**的參考價、漲停、跌停在股票與期貨都有;指數只有參考價。期貨連續月的 `target_code` 是當月實際合約。
+
 ## 限制與未實測事項
 
-**這個套件還沒有用有效憑證對真的 `shioaji server` 跑過任何東西**(只有上一節的啟動與登入失敗)。下面每一項都是「文件沒寫、或寫了但我沒量過」,
-套件的處理方式是防禦性的 —— 但防禦性不等於正確,第一次成功登入真 server(M0 實測)時請對照日誌逐項確認:
+下面每一項都是文件沒寫、或還沒在真 server 上確認過的行為。套件的處理方式是防禦性的 —— 但防禦性不等於正確,
+第一次在你的環境使用時,請對照日誌逐項確認:
 
 - **心跳的格式與頻率。**文件沒寫。套件把事件名 `heartbeat` / `ping`、空白事件名、非 JSON 物件的未知事件都當心跳並保留原文,
   SSE 註解行也算「活著」。第一個心跳的原文與第一個註解行會寫進日誌。
@@ -424,10 +435,10 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
   `quote_idx` 的欄位,文件只寫了萬用字元或根本沒寫;名稱取自 Python SDK,**未在 HTTP 上驗證**。對不上時那個欄位是 `null`,
   不會讓事件失敗(只有代碼、時間、價格與五檔是必要的)。
 - **全市場日 OHLCV 的路徑與回應形狀(0.2.0)。**文件只提到命令列的 `shioaji data daily-quotes --date YYYY-MM-DD --exclude-warrant`,
-  沒有寫 HTTP 路徑。`GetDailyQuotesAsync` 對 `ShioajiOptions.DailyQuotesPath`(預設 **`/api/v1/data/daily_quotes`,未驗證,待實機 OpenAPI 確認**)
+  沒有寫 HTTP 路徑。`GetDailyQuotesAsync` 對 `ShioajiOptions.DailyQuotesPath`(預設 **`/api/v1/data/daily_quotes`,未驗證,尚未對真 server 的 OpenAPI 確認**)
   送 `POST`,body 是 `{date, exclude_warrant}`,並假設回應是物件陣列、每筆至少有 `code`、`open`、`high`、`low`、`close`、`volume`;
   多餘的欄位在 `ShioajiDailyQuote.Raw`。路徑不對時回 `shioaji.http.404`:到 server 的 `/docs` 找真正的路徑,再設定 `DailyQuotesPath`。
-- **其他查詢端點的形狀(0.2.0)。**只有 `kbars` 與 `ticks` 的形狀有文件(帶欄位名的欄位陣列)。`snapshots`、`scanner`、`short_stock_sources`、
+- **其他查詢端點的形狀(0.2.0)。**只有 `kbars` 與 `ticks` 的形狀有文件(帶欄位名的欄位陣列),也已在模擬環境確認。`snapshots`、`scanner`、`short_stock_sources`、
   `credit_enquire` 與兩個監管清單讀成「物件陣列」(或包著陣列的物件;監管清單另收欄位陣列物件,Python SDK 就是這樣回的);
   欄位名取自 Python SDK,**未在 HTTP 上驗證**,沒有對映成屬性的內容都留在每一筆的 `Raw`。`short_stock_sources` 與 `credit_enquire`
   的請求 body(`{contracts: [...]}`)是比照 `snapshots` 推定的。
@@ -436,8 +447,8 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
 - **epoch 型的 `datetime`(0.2.0)。**數字型的 `datetime` 視為真正的 Unix epoch(UTC)。已知 Python SDK 的奈秒 `ts` 是把台北牆上時間當成 UTC 寫的;
   若 HTTP server 原樣轉出,這種格子會晚 8 小時。ISO 字串(本套件預期的形式)不受影響。
 - **1 分 K 的 30 天上限含不含頭尾。**券商寫「≤ 30 天」;本套件採較保守的讀法,含頭尾共 30 個日曆日。
-- **`shioaji server start` 是在前景執行還是自行脫離。**2026-10-30 實測:**前景、不脫離**(見上一節)。程式裡仍保留「行程以結束碼 0
-  結束但 server 仍在回應 → Attached,停止時呼叫 `shioaji server stop`」那條防禦路徑,它只用腳本化的探測測過。
+- **Attached 防禦路徑。**server 實際上是前景行程(見上一節),但程式裡仍保留「行程以結束碼 0 結束但 server 仍在回應 → Attached,
+  停止時呼叫 `shioaji server stop`」那條路徑,它只用腳本化的探測測過。
 - **`server stop` 的行為、`--port` 參數、SSE 連線是否計入 5 條登入連線、HTTP / SSE 實際延遲。**都沒量過。
 - **`SJ_AGENT_HARNESS`**(語意未知)只提供透傳,走 `ShioajiServerOptions.AdditionalEnvironment`。
 - **Windows 以外的平台。**測試只在 Windows 跑過。`ShioajiServerSupervisor` 的行程管理與 `HttpListener` 假伺服器理論上跨平台,
@@ -447,7 +458,7 @@ Console.WriteLine($"今日已用約 {traffic.Bytes} bytes,下次重置 {traffic.
 
 這一版刻意不做、但會在後續版本補上的:
 
-- 實作 `TradeKit.Abstractions` 的中立介面:`IExchangeClient`、`IMarketDataFeed`、`IUserDataFeed`(M1 再做對映)。
+- 實作 `TradeKit.Abstractions` 的中立介面:`IExchangeClient`、`IMarketDataFeed`、`IUserDataFeed`。
 - 帳務(`portfolio`):部位、損益、交割、保證金、交易額度。
 - 用程式碼強制「盤中禁止拿歷史端點當即時報價」(0.2.0 只在文件寫明這條規則、交給呼叫端決定;要強制需要交易日曆)。
 - 組合單、預收款項 / 預收股票、`watchlist`。
@@ -490,7 +501,7 @@ dotnet test -c Release -- --coverage --coverage-output-format cobertura
 | `Ozakboy.Http` | 0.3.4 | 請求管線(重試、逾時、脫敏日誌、遮罩) |
 | `Ozakboy.Core.Abstractions` | 0.3.0 | `Result` / `Error` / `Precision` |
 | `Ozakboy.Security` | 0.1.1 | `SecretMasker` |
-| `Ozakboy.TradeKit.Abstractions` | 0.8.0 | 本版只引用、不實作;M1 做中立介面對映 |
+| `Ozakboy.TradeKit.Abstractions` | 0.8.0 | 本版只引用、不實作;中立介面對映見「未來」 |
 | `Microsoft.Extensions.DependencyInjection.Abstractions` | 10.0.14 | DI 註冊 |
 | `Microsoft.Extensions.Http` | 10.0.14 | 具名 `HttpClient` |
 | `Microsoft.Extensions.Logging.Abstractions` | 10.0.14 | 日誌 |

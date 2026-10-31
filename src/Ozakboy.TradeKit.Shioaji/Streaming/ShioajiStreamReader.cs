@@ -30,14 +30,14 @@ namespace Ozakboy.TradeKit.Shioaji.Streaming;
 /// <para>
 /// <b>斷線重連。</b>連線結束、讀取失敗或 <see cref="ShioajiOptions.StreamIdleTimeout"/> 內沒收到任何一行(含心跳與註解)
 /// 時,關閉、退避(<see cref="ShioajiOptions.ReconnectBackoff"/>)、重連。<b>Shioaji 斷線後必須重新訂閱</b>,
-/// 所以重連成功之後會呼叫建構時注入的回呼(TideTrade 用它重放行情訂閱與委託回報訂閱);回呼回傳失敗或丟出可預期的
+/// 所以重連成功之後會呼叫建構時注入的回呼(用來重放行情訂閱與委託回報訂閱);回呼回傳失敗或丟出可預期的
 /// 例外只寫日誌,串流照常繼續。每一次連線、斷線、重連都以 <see cref="ShioajiStreamLifecycleEvent"/> 從同一個
 /// <c>IAsyncEnumerable</c> 送出。
 /// <b>Reconnection.</b> When the connection ends, a read fails, or no line at all, heartbeats and comments included,
 /// arrives within <see cref="ShioajiOptions.StreamIdleTimeout"/>, the connection is closed, backed off
 /// (<see cref="ShioajiOptions.ReconnectBackoff"/>) and remade. <b>Shioaji needs subscriptions made again after a
-/// drop</b>, so the callback injected at construction runs after a successful reconnection (TideTrade uses it to
-/// replay market-data and order-report subscriptions); a failed result or an expected exception is only logged and
+/// drop</b>, so the callback injected at construction runs after a successful reconnection (use it to replay
+/// market-data and order-report subscriptions); a failed result or an expected exception is only logged and
 /// the stream carries on. Every connect, disconnect and reconnect is delivered as a
 /// <see cref="ShioajiStreamLifecycleEvent"/> through the same <c>IAsyncEnumerable</c>.
 /// </para>

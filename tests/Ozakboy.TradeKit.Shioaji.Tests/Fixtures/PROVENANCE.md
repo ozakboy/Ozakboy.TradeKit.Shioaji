@@ -16,12 +16,12 @@ While 0.1.0 was written there were **no Shioaji credentials**, so a real `shioaj
 and the official documentation gives **field lists** rather than verbatim sample responses. Every file below is
 therefore **hand-built from the documented field lists**, not recorded.
 
-這代表測試證明的是「本套件正確讀懂文件描述的形狀」,**不是**「真 server 真的長這樣」。第一次連真 server
-(M0 實測)後,請用實際錄到的回應取代這裡的檔案,並更新本表。
+這代表測試證明的是「本套件正確讀懂文件描述的形狀」,**不是**「真 server 真的長這樣」。對真 server 錄到回應後,
+請用實際錄到的回應取代這裡的檔案,並更新本表。
 
 So the tests prove that the package reads the shape the documentation describes correctly, **not** that the real
-server looks like this. After the first run against a real server (the M0 measurement), replace these files with
-recorded responses and update this table.
+server looks like this. Once responses are recorded from a real server, replace these files with them and update
+this table.
 
 ## 檔案 / Files
 

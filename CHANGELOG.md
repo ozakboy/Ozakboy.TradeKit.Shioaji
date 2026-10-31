@@ -8,6 +8,25 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-10-31
+
+**只改文件,程式碼與行為都沒有變。**
+**Documentation only. The code and its behaviour are unchanged.**
+
+### 功能優化 / Improved
+
+- README(中英)的開頭改寫成目前的實測狀態:模擬環境已實測過登入、帳號、委託回報訂閱、商品查詢、1 分 K、整日逐筆與用量查詢。
+  The opening of both READMEs now states what is tested: login, accounts, the order-report subscription, contract
+  queries, 1-minute bars, whole-day ticks and the usage query ran in the simulation environment.
+- 新增「官方 server 的已知行為」一節,取代原本記錄單次測試過程的段落;補上 1 分 K 時間是分鐘結束時刻、量與金額的單位、
+  指數與期貨的 1 分 K、流量參考值,以及用量查詢的更新延遲。
+  A new section, "Known server behaviour", replaces the log of a single test run. It adds that a 1-minute bar's time is
+  the end of its minute, the units of volume and amount, 1-minute bars for indices and futures, traffic figures, and the
+  update delay of the usage query.
+- README、CHANGELOG、XML 註解與專案檔註解拿掉內部開發用的里程碑代號與應用程式名稱。
+  The README, the CHANGELOG, the XML comments and the project-file comments no longer carry internal milestone codes or
+  application names.
+
 ## [0.2.0] - 2026-10-30
 
 **加入歷史資料與查詢(K 線、逐筆、快照、全市場日 OHLCV、排行掃描、借券券源、資券餘額、處置股與注意股)、流量計與全商品列表。**
@@ -176,9 +195,9 @@ behaviour is measured; the rest is still inferred from the documentation.
 
 ## [0.1.0] - 2026-10-30
 
-**第一版(M0):讓桌面系統能啟動永豐金 Shioaji 的官方本機 server、看到行情、下一筆模擬單並收到回報。**
-**The first release (M0): let a desktop application start SinoPac Shioaji's official local server, see market data,
-place one simulated order and receive its report.**
+**第一版:啟動永豐金 Shioaji 的官方本機 server、看到行情、下一筆模擬單並收到回報。**
+**The first release: start SinoPac Shioaji's official local server, see market data, place one simulated order and
+receive its report.**
 
 這一版**從未對真的 `shioaji server` 跑過**(撰寫時沒有憑證);所有測試都對著本機假伺服器與假的可執行檔。
 文件沒寫、沒量過的行為全部列在 README 的「限制與未實測事項」,套件對它們一律採防禦性處理並把第一次看到的原文寫進日誌。
@@ -291,8 +310,8 @@ defensively and logs the first original text it sees.
   several field names, and whether `server start` stays in the foreground or detaches are all unmeasured.
 - 測試只在 Windows 跑過。
   The tests have run on Windows only.
-- 不在這一版:與 `TradeKit.Abstractions` 的中立介面對映(M1)、帳務、歷史資料、組合單、預收、`watchlist`、處置股。
-  Not in this release: the mapping to the neutral `TradeKit.Abstractions` interfaces (M1), account data, historical
+- 不在這一版:與 `TradeKit.Abstractions` 的中立介面對映、帳務、歷史資料、組合單、預收、`watchlist`、處置股。
+  Not in this release: the mapping to the neutral `TradeKit.Abstractions` interfaces, account data, historical
   data, combo orders, earmarking, `watchlist`, and regulatory lists.
 
 [0.2.0]: https://github.com/ozakboy/Ozakboy.TradeKit.Shioaji/releases/tag/v0.2.0
