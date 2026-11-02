@@ -168,9 +168,9 @@ public sealed class ShioajiStreamEventParserTests
         Assert.AreEqual(ShioajiOrderEventType.Unknown, ((ShioajiOrderEvent)Parse("order_event", unknownType).GetValueOrThrow()).EventType);
     }
 
-    // 2026-11-02 模擬環境實測:委託與撤單回報的 event_id 都是空的;server 也把非字串值正規化成 ""。
-    // Measured in the simulation on 2026-11-02: order and cancel reports carry an empty event_id; the server also
-    // normalises non-string values to "".
+    // 官方型別註記允許 event_id 是 ""(沒有識別碼的紀錄),server 也把非字串值正規化成 ""。
+    // The official type note allows an empty event_id (records without an ID), and the server normalises non-string
+    // values to "".
     [TestMethod]
     [DataRow("""{"event_id":"","order":{"id":"x"}}""")]
     [DataRow("""{"event_id":"   ","order":{"id":"x"}}""")]
@@ -183,6 +183,57 @@ public sealed class ShioajiStreamEventParserTests
         Assert.AreEqual(string.Empty, evt.EventId);
         Assert.AreEqual("x", evt.Order!.Id);
         Assert.AreEqual(json, evt.RawJson);
+    }
+
+    // 2026-11-02 盤中模擬實測的外形:{"state":"StockOrder","data":{"StockOrder":{...}}}。
+    // The shape measured in the simulation during the session on 2026-11-02.
+    [TestMethod]
+    public void OrderEvent_MeasuredEnvelope_IsUnwrapped()
+    {
+        var evt = (ShioajiOrderEvent)TestEvents.Parse("order_event", "order_event_order_measured.json");
+
+        Assert.AreEqual("v1:SO:A1EGUotUq:BSlPhVA:7", evt.EventId);
+        Assert.AreEqual(ShioajiOrderEventType.Order, evt.EventType);
+        Assert.AreEqual("New", evt.Operation!.OpType);
+        Assert.AreEqual("02FD97", evt.Order!.Id);
+        Assert.AreEqual(ShioajiAction.Buy, evt.Order.Action);
+        Assert.AreEqual(2135m, evt.Order.Price);
+        Assert.AreEqual(1m, evt.Order.Quantity);
+        Assert.AreEqual("TTPRBT", evt.Order.CustomField);
+        Assert.AreEqual(ShioajiOrderLot.Common, evt.Order.OrderLot);
+        Assert.AreEqual("9A95", evt.Order.Account!.BrokerId);
+        Assert.AreEqual("02FD97", evt.Status!.Id);
+        Assert.AreEqual(1m, evt.Status.OrderQuantity);
+        Assert.AreEqual(0m, evt.Status.CancelQuantity);
+        Assert.IsNotNull(evt.Status.ExchangeTs);
+        Assert.AreEqual("2330", evt.Contract!.Code);
+        Assert.IsNull(evt.Deal);
+        Assert.IsTrue(evt.RawJson.StartsWith("{\"state\":\"StockOrder\"", StringComparison.Ordinal), "RawJson 保留含包裝的原文");
+    }
+
+    [TestMethod]
+    public void OrderEvent_DealEnvelope_IsUnwrappedAndTypedByState()
+    {
+        const string json = """{"state":"StockDeal","data":{"StockDeal":{"event_id":"v1:SD:x:1","trade_id":"02FD97","seqno":"02FD97","ordno":"1A14CC","exchange_seq":"X1","broker_id":"9A95","account_id":"1234567","action":"Buy","code":"2330","order_cond":"Cash","order_lot":"Common","price":2135.0,"quantity":1,"web_id":"137","custom_field":"TTPRBT","ts":1793584043.5}}}""";
+
+        var evt = (ShioajiOrderEvent)Parse("order_event", json).GetValueOrThrow();
+
+        Assert.AreEqual("v1:SD:x:1", evt.EventId);
+        Assert.AreEqual(ShioajiOrderEventType.Deal, evt.EventType);
+        Assert.AreEqual("02FD97", evt.Deal!.TradeId);
+        Assert.AreEqual(2135m, evt.Deal.Price);
+    }
+
+    [TestMethod]
+    [DataRow("""{"data":{"StockOrder":{"event_id":"e","order":{"id":"x"}}}}""", ShioajiOrderEventType.Order)]
+    [DataRow("""{"state":"Other","data":{"StockDeal":{"event_id":"e","trade_id":"t","exchange_seq":"s","price":1,"quantity":1}}}""", ShioajiOrderEventType.Unknown)]
+    [DataRow("""{"state":"StockOrder","data":{"event_id":"e","order":{"id":"x"}}}""", ShioajiOrderEventType.Order)]
+    public void OrderEvent_EnvelopeWithoutAMatchingState_StillFindsTheBody(string json, ShioajiOrderEventType expected)
+    {
+        var evt = (ShioajiOrderEvent)Parse("order_event", json).GetValueOrThrow();
+
+        Assert.AreEqual("e", evt.EventId);
+        Assert.AreEqual(expected, evt.EventType);
     }
 
     [TestMethod]

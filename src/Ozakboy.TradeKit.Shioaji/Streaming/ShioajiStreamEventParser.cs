@@ -404,16 +404,14 @@ internal static class ShioajiStreamEventParser
 
     private static Result<ShioajiOrderEvent> ReadOrderEvent(JsonElement root, string rawJson, DateTimeOffset receivedAt)
     {
-        var f = new ShioajiFieldReader(root, OrderEvent);
+        var (body, state) = UnwrapOrderEvent(root);
+        var f = new ShioajiFieldReader(body, OrderEvent);
 
-        // event_id 是去重用的鍵,但 server 允許它是空字串(官方型別註記「沒有識別碼的紀錄為 ""」,非字串值也被正規化成 "")。
-        // 2026-11-02 實測:模擬環境的委託與撤單回報都是空的 event_id,當成必要欄位會把每一筆回報丟掉。
-        // 所以缺漏時給空字串、照常送出,不自己編識別碼;去重的替代鍵由呼叫端決定(RawJson 完整保留)。
-        // event_id is the de-duplication key, but the server allows it to be empty (the official type note says ""
-        // for records without an ID, and non-string values are normalised to ""). Measured on 2026-11-02: the
-        // simulation's order and cancel reports all carry an empty event_id, so treating it as required dropped every
-        // report. A missing value becomes "" and the event is still delivered; no identifier is invented here, and
-        // the caller picks a substitute de-duplication key (RawJson is kept in full).
+        // event_id 是去重用的鍵,但官方型別註記允許空字串(沒有識別碼的紀錄為 ""),server 也把非字串值正規化成 "";
+        // 缺漏時給空字串、照常送出,不自己編識別碼,去重的替代鍵由呼叫端決定(RawJson 完整保留)。
+        // event_id is the de-duplication key, but the official type note allows an empty string (records without an
+        // ID) and the server normalises non-string values to "". A missing value becomes "" and the event is still
+        // delivered; no identifier is invented here, and the caller picks a substitute key (RawJson is kept in full).
         var eventId = f.OptionalString("event_id")?.Trim() ?? string.Empty;
 
         ShioajiOrderEventDeal? deal = null;
@@ -426,11 +424,11 @@ internal static class ShioajiStreamEventParser
         }
         else if (f.TryGet("trade_id", out _) && f.TryGet("exchange_seq", out _))
         {
-            deal = ReadDeal(root);
+            deal = ReadDeal(body);
             isDeal = true;
         }
 
-        var explicitType = f.OptionalString("event_type");
+        var explicitType = f.OptionalString("event_type") ?? state;
         var type = explicitType is not null
             ? ParseEventType(explicitType)
             : (isDeal ? ShioajiOrderEventType.Deal : ShioajiOrderEventType.Order);
@@ -463,6 +461,52 @@ internal static class ShioajiStreamEventParser
             Contract = contract,
             RawJson = rawJson,
         };
+    }
+
+    /// <summary>
+    /// 拆開真 server 的回報包裝。2026-11-02 盤中模擬實測的外形是
+    /// <c>{"state":"StockOrder","data":{"StockOrder":{event_id, operation, order, status, contract}}}</c>:
+    /// <c>data</c> 是以種類為鍵的物件(外部標記的列舉,種類有 StockOrder / StockDeal / FuturesOrder / FuturesDeal),
+    /// <c>state</c> 重複一次種類。沒有 <c>data</c> 物件的扁平外形(文件上的欄位清單)原樣讀。
+    /// Unwraps the real server's report envelope. The shape measured in the simulation during the session on
+    /// 2026-11-02 is <c>{"state":"StockOrder","data":{"StockOrder":{...}}}</c>: <c>data</c> is keyed by the kind (an
+    /// externally tagged enum: StockOrder / StockDeal / FuturesOrder / FuturesDeal) and <c>state</c> repeats the kind.
+    /// A flat shape without a <c>data</c> object (the documentation's field list) is read as is.
+    /// </summary>
+    /// <returns>回報本體與種類名稱(沒有包裝時為 <see langword="null"/>)。The report body and the kind name (null without an envelope).</returns>
+    private static (JsonElement Body, string? State) UnwrapOrderEvent(JsonElement root)
+    {
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            return (root, null);
+        }
+
+        var state = root.TryGetProperty("state", out var stateElement) && stateElement.ValueKind == JsonValueKind.String
+            ? stateElement.GetString()
+            : null;
+
+        if (!string.IsNullOrWhiteSpace(state) && data.TryGetProperty(state, out var tagged) && tagged.ValueKind == JsonValueKind.Object)
+        {
+            return (tagged, state);
+        }
+
+        // state 缺漏或對不上:data 只有一個物件屬性時,屬性名就是種類。
+        // state missing or mismatched: when data holds a single object property, its name is the kind.
+        JsonProperty? only = null;
+        var count = 0;
+
+        foreach (var property in data.EnumerateObject())
+        {
+            count++;
+            only = property;
+        }
+
+        if (count == 1 && only!.Value.Value.ValueKind == JsonValueKind.Object)
+        {
+            return (only.Value.Value, string.IsNullOrWhiteSpace(state) ? only.Value.Name : state);
+        }
+
+        return (data, string.IsNullOrWhiteSpace(state) ? null : state);
     }
 
     private static ShioajiOrderEventType ParseEventType(string text)

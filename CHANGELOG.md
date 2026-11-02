@@ -8,22 +8,44 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
-## [0.3.1] - 2026-11-02
+## [0.3.2] - 2026-11-02
 
-**修正模擬環境收不到任何委託回報。**
-**Fixes the simulation delivering no order reports at all.**
+**真正修好模擬環境的委託回報:拆開真 server 的回報包裝。**
+**Actually fixes order reports in the simulation: unwraps the real server's report envelope.**
 
 ### 問題修正 / Fixed
 
-- **`order_event` 的 `event_id` 是空字串時不再整則丟掉。**2026-11-02 對真 `shioaji server`(模擬環境)實測:委託與撤單回報的
-  `event_id` 都是空的(官方型別註記「沒有識別碼的紀錄為 ""」,server 也把非字串值正規化成 ""),之前當成必要欄位,
-  每一則都變成 `shioaji.response.missing_field` 失敗,呼叫端永遠等不到回報。現在缺漏、`null` 或空白都讀成 `EventId == ""`、事件照常送出;
-  套件不自己編識別碼,需要去重的呼叫端請以 `RawJson` 建立替代鍵。
-  **An `order_event` with an empty `event_id` is no longer dropped.** Measured against a real `shioaji server` (simulation) on
-  2026-11-02: order and cancel reports carry an empty `event_id` (the official type note says "" for records without an ID, and the
-  server normalises non-string values to ""). It used to be a required field, so every report became a `shioaji.response.missing_field`
-  failure and callers never saw one. A missing, `null` or blank value now reads as `EventId == ""` and the event is delivered; the
-  package invents no identifier, so callers that de-duplicate should build a substitute key from `RawJson`.
+- **`order_event` 認得真 server 的包裝外形。**2026-11-02 盤中對真 `shioaji server`(1.7.10,模擬環境)實測,回報外面包著一層
+  `{"state":"StockOrder","data":{"StockOrder":{event_id, operation, order, status, contract}}}`;`data` 以種類為鍵
+  (StockOrder / StockDeal / FuturesOrder / FuturesDeal),`state` 重複一次種類,`event_id` **有值**(例如 `v1:SO:…:7`)。
+  之前只讀最外層:0.3.0 報「缺 `event_id`」整則丟掉,0.3.1 放行後又因為最外層沒有 `order` / `status` 讓呼叫端判成讀不懂。
+  現在先拆包裝再讀,`state` 當作事件種類;沒有包裝的扁平外形照舊可讀。`RawJson` 仍是含包裝的完整原文。
+  **`order_event` understands the real server's envelope.** Measured against a real `shioaji server` (1.7.10, simulation)
+  during the session on 2026-11-02, reports are wrapped in `{"state":"StockOrder","data":{"StockOrder":{...}}}`: `data` is keyed by
+  the kind (StockOrder / StockDeal / FuturesOrder / FuturesDeal), `state` repeats it, and `event_id` **has a value**. Only the outer
+  level used to be read: 0.3.0 reported a missing `event_id` and dropped the report, and once 0.3.1 let it through the outer level
+  had no `order` or `status`. The envelope is now unwrapped first and `state` becomes the event kind; the flat shape still reads.
+  `RawJson` remains the full original text, envelope included.
+
+### 已知事項 / Notes
+
+- 成交回報(`StockDeal`)的包裝外形是依同一個列舉推定,尚未實測。
+  The deal report (`StockDeal`) envelope is inferred from the same enum and not yet measured.
+
+## [0.3.1] - 2026-11-02
+
+**放寬 `order_event` 的 `event_id`(這一版沒有修好模擬環境的回報,見 0.3.2)。**
+**Relaxes the `order_event` `event_id` (this release did not fix the simulation's reports; see 0.3.2).**
+
+### 問題修正 / Fixed
+
+- **`order_event` 的 `event_id` 缺漏或空白時不再整則丟掉。**官方型別註記允許 `""`(沒有識別碼的紀錄),server 也把非字串值正規化成 `""`;
+  之前當成必要欄位會變成 `shioaji.response.missing_field` 失敗。現在缺漏、`null` 或空白都讀成 `EventId == ""`、事件照常送出;
+  套件不自己編識別碼,需要去重的呼叫端請以 `RawJson` 建立替代鍵。發版當時以為模擬環境的 `event_id` 是空的,0.3.2 實測證實是包裝外形的問題。
+  **A missing or blank `order_event` `event_id` no longer drops the report.** The official type note allows "" (records without an ID)
+  and the server normalises non-string values to "". A missing, `null` or blank value now reads as `EventId == ""` and the event is
+  delivered; callers that de-duplicate should build a substitute key from `RawJson`. At release time the simulation's `event_id` was
+  believed to be empty; 0.3.2 measured that the real cause was the envelope.
 
 ## [0.3.0] - 2026-10-31
 

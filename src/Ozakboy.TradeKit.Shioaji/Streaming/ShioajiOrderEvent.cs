@@ -205,23 +205,28 @@ public sealed record ShioajiOrderEventDeal
 /// number does not mean a loss.
 /// </para>
 /// <para>
-/// 這個事件的 JSON 形狀只有文件上的欄位清單、沒有實際範例,所以 <see cref="EventType"/> 由內容推斷:
-/// 頂層有 <c>deal</c> 物件、或頂層同時有 <c>trade_id</c> 與 <c>exchange_seq</c> 的是
+/// 真 server 的外形(2026-11-02 模擬環境實測)是 <c>{"state":"StockOrder","data":{"StockOrder":{…}}}</c>:
+/// 先拆開包裝,<c>state</c> 就是 <see cref="EventType"/>(含 Deal 為成交、含 Order 為委託)。沒有包裝時由內容推斷:
+/// 有 <c>deal</c> 物件、或同時有 <c>trade_id</c> 與 <c>exchange_seq</c> 的是
 /// <see cref="ShioajiOrderEventType.Deal"/>(明確的 <c>event_type</c> 欄位優先),其餘是
-/// <see cref="ShioajiOrderEventType.Order"/>。完整原文一律保留在 <see cref="RawJson"/>,推斷錯了可以自己再讀。
-/// The JSON shape of this event is known only from a field list, with no real sample, so
-/// <see cref="EventType"/> is inferred from the content: a top-level <c>deal</c> object, or a top level carrying
-/// both <c>trade_id</c> and <c>exchange_seq</c>, is a <see cref="ShioajiOrderEventType.Deal"/> (an explicit
-/// <c>event_type</c> field wins), and everything else is an <see cref="ShioajiOrderEventType.Order"/>. The full
-/// original text is always kept in <see cref="RawJson"/>, so a wrong inference can be re-read.
+/// <see cref="ShioajiOrderEventType.Order"/>。成交回報的包裝外形尚未實測。完整原文一律保留在 <see cref="RawJson"/>。
+/// The real server's shape (measured in the simulation on 2026-11-02) is
+/// <c>{"state":"StockOrder","data":{"StockOrder":{…}}}</c>: the envelope is unwrapped first and <c>state</c> gives the
+/// <see cref="EventType"/> (Deal for fills, Order for orders). Without an envelope the kind is inferred from the
+/// content: a <c>deal</c> object, or both <c>trade_id</c> and <c>exchange_seq</c>, is a
+/// <see cref="ShioajiOrderEventType.Deal"/> (an explicit <c>event_type</c> field wins), and everything else is an
+/// <see cref="ShioajiOrderEventType.Order"/>. The deal envelope is not yet measured. The full original text is always
+/// kept in <see cref="RawJson"/>.
 /// </para>
 /// </remarks>
 public sealed record ShioajiOrderEvent : ShioajiStreamEvent
 {
     /// <summary>
-    /// 事件識別碼,去重用;<b>可能是空字串</b>(server 沒給識別碼,模擬環境實測如此),這時請自行以 <see cref="RawJson"/> 等內容建立替代鍵。
-    /// The event identifier, for de-duplication; <b>may be an empty string</b> (the server gave no identifier, as
-    /// measured in the simulation), in which case build a substitute key from <see cref="RawJson"/> or similar.
+    /// 事件識別碼,去重用;<b>可能是空字串</b>(官方型別註記允許沒有識別碼的紀錄),這時請自行以 <see cref="RawJson"/> 等內容建立替代鍵。
+    /// 實測的值形如 <c>v1:SO:…:7</c>。
+    /// The event identifier, for de-duplication; <b>may be an empty string</b> (the official type note allows records
+    /// without an identifier), in which case build a substitute key from <see cref="RawJson"/> or similar. Measured
+    /// values look like <c>v1:SO:…:7</c>.
     /// </summary>
     public required string EventId { get; init; }
 

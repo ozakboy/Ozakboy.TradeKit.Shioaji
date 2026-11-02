@@ -419,7 +419,8 @@ Console.WriteLine($"available {limits.GetValueOrThrow().TradingAvailable}");
 
 五檔是 `IReadOnlyList<decimal>`,**長度剛好 5**;長度不對的那一則事件失敗,不把殘缺的五檔送給策略。
 必要欄位(代碼、時間、價格、五檔陣列)缺漏一律失敗,**絕不補 0** —— 0 會被讀成「成交價是零元」。
-`order_event` 的 `event_id` 例外:server 允許空字串(模擬環境實測回報全是空的),缺漏時 `EventId` 為 `""`、事件照常送出,去重的替代鍵由呼叫端用 `RawJson` 建立(0.3.1 起)。
+`order_event` 的 `event_id` 例外:官方型別註記允許空字串,缺漏時 `EventId` 為 `""`、事件照常送出,去重的替代鍵由呼叫端用 `RawJson` 建立(0.3.1 起)。
+真 server 的 `order_event` 外面包著 `{"state":"StockOrder","data":{"StockOrder":{…}}}`(2026-11-02 模擬環境實測),套件會先拆開再讀,`state` 即事件種類;沒有包裝的扁平外形也收(0.3.2 起)。
 
 ### 數字與時間
 
