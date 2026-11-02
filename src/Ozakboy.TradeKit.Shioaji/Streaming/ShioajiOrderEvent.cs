@@ -219,8 +219,9 @@ public sealed record ShioajiOrderEventDeal
 public sealed record ShioajiOrderEvent : ShioajiStreamEvent
 {
     /// <summary>
-    /// 事件識別碼,去重用。
-    /// The event identifier, for de-duplication.
+    /// 事件識別碼,去重用;<b>可能是空字串</b>(server 沒給識別碼,模擬環境實測如此),這時請自行以 <see cref="RawJson"/> 等內容建立替代鍵。
+    /// The event identifier, for de-duplication; <b>may be an empty string</b> (the server gave no identifier, as
+    /// measured in the simulation), in which case build a substitute key from <see cref="RawJson"/> or similar.
     /// </summary>
     public required string EventId { get; init; }
 

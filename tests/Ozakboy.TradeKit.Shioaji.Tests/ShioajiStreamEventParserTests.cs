@@ -168,13 +168,31 @@ public sealed class ShioajiStreamEventParserTests
         Assert.AreEqual(ShioajiOrderEventType.Unknown, ((ShioajiOrderEvent)Parse("order_event", unknownType).GetValueOrThrow()).EventType);
     }
 
+    // 2026-11-02 模擬環境實測:委託與撤單回報的 event_id 都是空的;server 也把非字串值正規化成 ""。
+    // Measured in the simulation on 2026-11-02: order and cancel reports carry an empty event_id; the server also
+    // normalises non-string values to "".
     [TestMethod]
-    public void OrderEvent_WithoutAnEventId_IsAFailure_BecauseItCannotBeDeduplicated()
+    [DataRow("""{"event_id":"","order":{"id":"x"}}""")]
+    [DataRow("""{"event_id":"   ","order":{"id":"x"}}""")]
+    [DataRow("""{"event_id":null,"order":{"id":"x"}}""")]
+    [DataRow("""{"order":{"id":"x"}}""")]
+    public void OrderEvent_WithoutAnEventId_IsStillDelivered_WithAnEmptyId(string json)
     {
-        var result = Parse("order_event", """{"order":{"id":"x"}}""");
+        var evt = (ShioajiOrderEvent)Parse("order_event", json).GetValueOrThrow();
 
-        Assert.IsTrue(result.IsFailure);
-        Assert.AreEqual(ShioajiErrorCodes.MissingField, result.Error.Code);
+        Assert.AreEqual(string.Empty, evt.EventId);
+        Assert.AreEqual("x", evt.Order!.Id);
+        Assert.AreEqual(json, evt.RawJson);
+    }
+
+    [TestMethod]
+    public void OrderEvent_ADealWithoutAnEventId_IsStillADeal()
+    {
+        var evt = (ShioajiOrderEvent)Parse("order_event", """{"event_id":"","trade_id":"t","exchange_seq":"x","price":10,"quantity":1,"code":"2330"}""").GetValueOrThrow();
+
+        Assert.AreEqual(string.Empty, evt.EventId);
+        Assert.AreEqual(ShioajiOrderEventType.Deal, evt.EventType);
+        Assert.AreEqual("t", evt.Deal!.TradeId);
     }
 
     [TestMethod]

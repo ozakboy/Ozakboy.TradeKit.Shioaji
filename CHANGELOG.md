@@ -8,6 +8,23 @@ All notable changes to this package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-02
+
+**修正模擬環境收不到任何委託回報。**
+**Fixes the simulation delivering no order reports at all.**
+
+### 問題修正 / Fixed
+
+- **`order_event` 的 `event_id` 是空字串時不再整則丟掉。**2026-11-02 對真 `shioaji server`(模擬環境)實測:委託與撤單回報的
+  `event_id` 都是空的(官方型別註記「沒有識別碼的紀錄為 ""」,server 也把非字串值正規化成 ""),之前當成必要欄位,
+  每一則都變成 `shioaji.response.missing_field` 失敗,呼叫端永遠等不到回報。現在缺漏、`null` 或空白都讀成 `EventId == ""`、事件照常送出;
+  套件不自己編識別碼,需要去重的呼叫端請以 `RawJson` 建立替代鍵。
+  **An `order_event` with an empty `event_id` is no longer dropped.** Measured against a real `shioaji server` (simulation) on
+  2026-11-02: order and cancel reports carry an empty `event_id` (the official type note says "" for records without an ID, and the
+  server normalises non-string values to ""). It used to be a required field, so every report became a `shioaji.response.missing_field`
+  failure and callers never saw one. A missing, `null` or blank value now reads as `EventId == ""` and the event is delivered; the
+  package invents no identifier, so callers that de-duplicate should build a substitute key from `RawJson`.
+
 ## [0.3.0] - 2026-10-31
 
 **加入帳務查詢:庫存、已實現損益、交割款、交易額度、期貨保證金與銀行餘額。只新增、不改現有的公開簽章。**

@@ -463,8 +463,10 @@ All three are refused before the request leaves and consume no budget.
 | Connection lifecycle | `ShioajiStreamLifecycleEvent` |
 
 A book is an `IReadOnlyList<decimal>` **exactly 5 long**; an event with any other length fails rather than handing a
-strategy a broken book. A missing required field (code, time, price, book arrays, `event_id`) is always a failure and
-**never zero**, because zero reads as a price of nothing.
+strategy a broken book. A missing required field (code, time, price, book arrays) is always a failure and
+**never zero**, because zero reads as a price of nothing. The `order_event` `event_id` is the exception: the server allows
+it to be empty (every report in the simulation was, when measured), so a missing value gives `EventId == ""` and the event
+is still delivered; the caller builds a substitute de-duplication key from `RawJson` (since 0.3.1).
 
 ### Numbers and time
 

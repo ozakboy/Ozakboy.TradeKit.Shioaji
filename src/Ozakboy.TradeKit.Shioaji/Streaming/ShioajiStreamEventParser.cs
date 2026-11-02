@@ -406,14 +406,15 @@ internal static class ShioajiStreamEventParser
     {
         var f = new ShioajiFieldReader(root, OrderEvent);
 
-        // event_id 是去重用的鍵:缺漏就無法去重,同一筆回報重複送達會被當成兩筆,所以不補任何值。
-        // event_id is the de-duplication key: without it a repeated report counts twice, so nothing is invented.
-        var eventId = f.RequiredString("event_id");
-
-        if (!f.IsValid)
-        {
-            return f.Error!;
-        }
+        // event_id 是去重用的鍵,但 server 允許它是空字串(官方型別註記「沒有識別碼的紀錄為 ""」,非字串值也被正規化成 "")。
+        // 2026-11-02 實測:模擬環境的委託與撤單回報都是空的 event_id,當成必要欄位會把每一筆回報丟掉。
+        // 所以缺漏時給空字串、照常送出,不自己編識別碼;去重的替代鍵由呼叫端決定(RawJson 完整保留)。
+        // event_id is the de-duplication key, but the server allows it to be empty (the official type note says ""
+        // for records without an ID, and non-string values are normalised to ""). Measured on 2026-11-02: the
+        // simulation's order and cancel reports all carry an empty event_id, so treating it as required dropped every
+        // report. A missing value becomes "" and the event is still delivered; no identifier is invented here, and
+        // the caller picks a substitute de-duplication key (RawJson is kept in full).
+        var eventId = f.OptionalString("event_id")?.Trim() ?? string.Empty;
 
         ShioajiOrderEventDeal? deal = null;
         var isDeal = false;
